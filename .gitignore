@@ -21,3 +21,6 @@ __pycache__/
 # IDE settings
 .idea/
 .vscode/
+
+#DataBase
+.DS_Store
