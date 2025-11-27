@@ -19,3 +19,6 @@ streamlit-folium
 # Environment & Utils
 python-dotenv
 watchdog
+
+#Database
+duckdb>=0.10.0

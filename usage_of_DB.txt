@@ -1,0 +1,148 @@
+МИНИМАЛЬНОЕ РУКОВОДСТВО ПО РАБОТЕ С БАЗОЙ ДАННЫХ
+================================================
+
+Структура проекта
+-----------------
+medhakathon/
+├── data/                     ← исходные CSV-файлы
+├── db/medinsight.duckdb      ← единый файл базы данных
+└── scripts_db/               ← скрипты для работы с БД
+    ├── 01_setup_db.py        ← пересоздать базу с нуля
+    ├── run_sql.py            ← выполнить DDL/DML-скрипты (CREATE, DROP...)
+    ├── run_sql_safe.py       ← выполнить безопасный SELECT-запрос
+    ├── inspect_db.py         ← показать структуру БД
+    ├── request.sql           ← ваш запрос (см. ниже)
+    └── answer.csv            ← результат выполнения request.sql
+├── main.py     ← не относится к БД
+├── data.py     ← тоже не относится
+..... и ещё всякие файлы, не относящиеся к базе данных 
+
+Как пересоздать базу
+--------------------
+1. Удалите старую базу (опционально):
+   rm db/medinsight.duckdb
+
+2. Запустите:
+   python scripts_db/01_setup_db.py
+
+   → Создастся новая база с таблицами:
+      - patients       (пациенты, без дубликатов)
+      - prescriptions  (рецепты, связь через id_пациента_1 → id_пациента)
+      - diagnoses      (справочник диагнозов МКБ)
+      - drugs          (справочник препаратов)
+
+Структура таблиц
+----------------
+• patients:
+    id_пациента        VARCHAR
+    дата_рождения      DATE
+    пол                VARCHAR
+    район_проживания   VARCHAR
+    регион             VARCHAR
+
+• prescriptions:
+    id_пациента        VARCHAR  ← связан с patients.id_пациента
+    дата_рецепта       TIMESTAMP
+    код_диагноза       VARCHAR  ← связан с diagnoses.код_мкб
+    код_препарата      VARCHAR
+
+• diagnoses:
+    код_мкб            VARCHAR
+    название_диагноза  VARCHAR
+    класс_заболевания  VARCHAR
+
+• drugs:
+    код_препарата      VARCHAR
+    дозировка          VARCHAR
+    Торговое название  VARCHAR
+    стоимость          DOUBLE
+    Полное_название    VARCHAR
+
+Как делать запросы
+------------------
+❗ ВСЕ запросы делаются через JOIN вручную. Вьюшек нет.
+
+Пример 1: Сколько случаев ОРВИ (J00–J06) в Центральном районе СПб?
+  SELECT COUNT(*) 
+  FROM prescriptions p
+  JOIN patients pa ON p.id_пациента = pa.id_пациента
+  WHERE 
+      pa.регион = 'Санкт-Петербург'
+      AND pa.район_проживания = 'ЦЕНТРАЛЬНЫЙ'
+      AND p.код_диагноза ILIKE 'J0[0-6]%';
+
+Пример 2: Топ-5 районов по аллергии (T78)
+  SELECT pa.район_проживания, COUNT(*) AS cases
+  FROM prescriptions p
+  JOIN patients pa ON p.id_пациента = pa.id_пациента
+  WHERE p.код_диагноза ILIKE 'T78%'
+  GROUP BY pa.район_проживания
+  ORDER BY cases DESC
+  LIMIT 5;
+
+!!! Как выполнить запрос и сохранить результат
+------------------------------------------
+1. Напишите ваш SELECT-запрос в файле:
+      scripts_db/request.sql
+
+   Пример содержимого request.sql:
+      SELECT pa.регион, COUNT(*) AS cases
+      FROM prescriptions p
+      JOIN patients pa ON p.id_пациента = pa.id_пациента
+      GROUP BY pa.регион;
+
+2. Выполните безопасный запуск:
+      cd scripts_db
+      python run_sql_safe.py request.sql
+
+3. Результат:
+   - Выводится в консоль (макс. 50 строк)
+   - Сохраняется в файл: scripts_db/answer.csv
+
+❗ Правила для run_sql_safe.py:
+   - Разрешены ТОЛЬКО SELECT-запросы
+   - Запрещены: CREATE, DROP, INSERT, UPDATE, DELETE и др.
+   - Автоматически добавляется LIMIT 5 ⇒ не будет "зависания" на больших таблицах
+   - Результат всегда сохраняется в answer.csv
+
+Как создавать аналитические таблицы (инсайты)
+---------------------------------------------
+Если вы хотите сохранить агрегат (например, ОРВИ по месяцам):
+(полезно для добавления вспомогательных таблиц)
+
+1. Создайте файл, например, orvi_monthly.sql:
+      CREATE TABLE insight_orvi_monthly AS
+      SELECT strftime('%Y-%m', p.дата_рецепта) AS month, COUNT(*) AS cases
+      FROM prescriptions p
+      JOIN patients pa ON p.id_пациента = pa.id_пациента
+      WHERE pa.регион = 'Санкт-Петербург'
+        AND p.код_диагноза ILIKE 'J0[0-6]%'
+      GROUP BY month;
+
+2. Выполните через обычный запускатель:
+      python run_sql.py orvi_monthly.sql
+
+3. Теперь таблицу можно использовать в request.sql:
+      SELECT * FROM insight_orvi_monthly;
+
+Полезные команды
+----------------
+# Посмотреть структуру базы
+python scripts_db/inspect_db.py
+
+# Пересоздать базу
+python scripts_db/01_setup_db.py
+
+# Выполнить безопасный запрос
+python scripts_db/run_sql_safe.py request.sql
+
+# Выполнить DDL-скрипт (CREATE TABLE...)
+python scripts_db/run_sql.py my_script.sql
+
+
+Для LLM агента (Слава):
+Ему должна передаваться структура БД (можно получить через запуск inspect_db.sql)
+А также запрос пользователя по типу "в каком году была наибольшая заболеваемость Гриппом"
+LLM пишет запрос SQL запрос, который сохраняется в request.sql, затем запускается, 
+после чего ответ сохраняется в answer.csv
+(Далее можно этот answer.csv передать глобальной LLM чтобы она оформила красивый ответ)
