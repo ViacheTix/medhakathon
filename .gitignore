@@ -12,6 +12,7 @@ input/
 *.csv
 *.xlsx
 *.json
+*.rtf
 
 # Python cache
 __pycache__/
