@@ -3,8 +3,8 @@ import json
 import os
 
 # Настройки путей
-INPUT_DIR = 'input'
-OUTPUT_DIR = 'data'  # Сюда положим готовые JSON для агента
+INPUT_DIR = 'data'
+OUTPUT_DIR = 'output'  # Сюда положим готовые JSON для агента
 
 # Создаем папку для выходных данных, если нет
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -118,7 +118,7 @@ def generate_insights(df):
     with open(os.path.join(OUTPUT_DIR, 'stats_by_season.json'), 'w', encoding='utf-8') as f:
         json.dump(season_json, f, ensure_ascii=False, indent=2)
         
-    print("✅ Готово! Файлы сохранены в папку 'data/'.")
+    print("✅ Готово! Файлы сохранены в папку 'output/'.")
 
 if __name__ == "__main__":
     df_diag, df_patients, df_recipes = load_data()

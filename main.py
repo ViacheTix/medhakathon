@@ -15,13 +15,13 @@ st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥"
 @st.cache_data
 def load_stats():
     # Проверяем, существуют ли файлы
-    if not os.path.exists('data/stats_by_district.json'):
+    if not os.path.exists('output/stats_by_district.json'):
         return None, None
 
-    with open('data/stats_by_district.json', 'r', encoding='utf-8') as f:
+    with open('output/stats_by_district.json', 'r', encoding='utf-8') as f:
         district_data = json.load(f)
     
-    with open('data/stats_by_season.json', 'r', encoding='utf-8') as f:
+    with open('output/stats_by_season.json', 'r', encoding='utf-8') as f:
         season_data = json.load(f)
         
     return district_data, season_data

@@ -41,6 +41,22 @@ def _get_seasonal_stats_func(season: str) -> str:
         
     return json.dumps(data, ensure_ascii=False)
 
+# def _get_sql_based_answer() -> str:
+#     """Внутренняя логика по поиску информации в БД по запросу в SQL"""
+#     path = 'data'
+#     if not os.path.exists(path):
+#         return "Ошибка: Файл данных не найден."
+        
+#     with open(path, 'r', encoding='utf-8') as f:
+#         data = json.load(f)
+        
+#     if season:
+#         clean_season = str(season).replace('"', '').replace("'", "").strip().capitalize()
+#         if clean_season in data:
+#             return json.dumps({clean_season: data[clean_season]}, ensure_ascii=False)
+        
+#     return json.dumps(data, ensure_ascii=False)
+
 # --- 2. СБОРКА АГЕНТА (LEGACY METHOD) ---
 
 def get_agent_executor(api_key: str):
@@ -64,6 +80,11 @@ def get_agent_executor(api_key: str):
             func=_get_seasonal_stats_func,
             description="Используй, когда спрашивают про сезоны (Зима, Весна, Лето, Осень) или время года."
         )
+        # Tool(
+        #     name="GetSQLBasedAnswer",
+        #     func=_get_sql_based_answer,
+        #     description="Используй, когда треубется найти специфичную информацию по запросу"
+        # )
     ]
     
     # 3. Инициализация через initialize_agent
