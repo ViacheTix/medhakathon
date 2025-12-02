@@ -1,13 +1,18 @@
--- request.sql
 SELECT
-    YEAR(p.дата_рецепта) AS год,
-    COUNT(*) AS количество_случаев
-FROM prescriptions p
-JOIN diagnoses d ON p.код_диагноза = d.код_мкб
+    COUNT(DISTINCT p.id_пациента) AS количество_уникальных_пациентов_с_гипертонией,
+    COUNT(pr.дата_рецепта) AS общее_количество_рецептов_по_гипертонии
+FROM
+    patients AS p
+JOIN
+    prescriptions AS pr ON p.id_пациента = pr.id_пациента
+JOIN
+    diagnoses AS d ON pr.код_диагноза = d.код_мкб
 WHERE
-    d.код_мкб LIKE 'J0%'
-    OR d.код_мкб LIKE 'J1%'
-    OR d.код_мкб = 'J20.9'  -- иногда пневмония/бронхит могут идти вместе
-GROUP BY YEAR(p.дата_рецепта)
-ORDER BY количество_случаев DESC
-LIMIT 10;
+    p.регион = 'Санкт-Петербург'
+    AND (
+        d.название_диагноза ILIKE '%гипертензия%' OR
+        d.название_диагноза ILIKE '%гипертоническая болезнь%' OR
+        d.название_диагноза ILIKE '%гипертония%' OR
+        d.название_диагноза ILIKE '%повышенное артериальное давление%'
+    )
+LIMIT 50
