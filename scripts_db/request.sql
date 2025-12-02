@@ -1,1 +1,18 @@
-SELECT * FROM prescriptions LIMIT 50
+SELECT
+    COUNT(DISTINCT p.id_пациента) AS количество_уникальных_пациентов_с_гипертонией,
+    COUNT(pr.дата_рецепта) AS общее_количество_рецептов_по_гипертонии
+FROM
+    patients AS p
+JOIN
+    prescriptions AS pr ON p.id_пациента = pr.id_пациента
+JOIN
+    diagnoses AS d ON pr.код_диагноза = d.код_мкб
+WHERE
+    p.регион = 'Санкт-Петербург'
+    AND (
+        d.название_диагноза ILIKE '%гипертензия%' OR
+        d.название_диагноза ILIKE '%гипертоническая болезнь%' OR
+        d.название_диагноза ILIKE '%гипертония%' OR
+        d.название_диагноза ILIKE '%повышенное артериальное давление%'
+    )
+LIMIT 50

@@ -53,6 +53,9 @@ DB_SCHEMA = """
 class MedicalSQLAgent:
     def __init__(self, api_key: str):
         # Используем 1.5-flash для скорости и стабильности SQL
+        # Open-ai
+        # Mistral
+        # 
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
             google_api_key=api_key, 
@@ -70,7 +73,8 @@ class MedicalSQLAgent:
     def _generate_sql(self, question: str) -> str:
         """Шаг 1: Превращаем вопрос в SQL"""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", f"{DB_SCHEMA}\nНапиши SQL запрос DuckDB для ответа на вопрос. LIMIT 50."),
+            ("system", f"""{DB_SCHEMA}\nНапиши SQL запрос DuckDB для ответа на вопрос. LIMIT 50. 
+             Расширь возможные названия заболеваний для SQL запроса, если они написаны неформально"""),
             ("human", question)
         ])
         chain = prompt | self.llm
