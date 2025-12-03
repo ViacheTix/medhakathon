@@ -1,112 +1,188 @@
-import streamlit as st
-import pandas as pd
-import json
-import plotly.express as px
+
 import os
 from dotenv import load_dotenv
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import duckdb
 
-# --- импорт класса LLM ---
-from agent import MedicalSQLAgent 
+from agent import OpenRouterSQLAgent # Новый (OpenRouter)
 
 load_dotenv()
 
 # --- Настройки страницы ---
+DB_PATH = "db/medinsight.duckdb" # Проверь путь! Если запускаешь из корня, должно быть так.
 st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥")
 
-# --- Загрузка данных для ДАШБОРДА (Оставляем как есть, это для графиков) ---
+# --- ФУНКЦИИ ЗАГРУЗКИ ДАННЫХ (ПРЯМО ИЗ DUCKDB) ---
 @st.cache_data
-def load_stats():
-    # Проверяем пути - у тебя в коде было output/, я оставил как у тебя
-    if not os.path.exists('output/stats_by_district.json'):
-        return None, None
 
-    with open('output/stats_by_district.json', 'r', encoding='utf-8') as f:
-        district_data = json.load(f)
+# --- ФУНКЦИИ ЗАГРУЗКИ ДАННЫХ (ПРЯМО ИЗ DUCKDB) ---
+@st.cache_data
+def load_dashboard_data():
+    """
+    Подключается к DuckDB и забирает данные для графиков.
+    Использует кэширование Streamlit, чтобы не нагружать базу при каждом клике.
+    """
+    if not os.path.exists(DB_PATH):
+        return None, None, None, None
+
+    # Подключаемся в режиме read_only, чтобы не блокировать файл
+    con = duckdb.connect(DB_PATH, read_only=True)
     
-    with open('output/stats_by_season.json', 'r', encoding='utf-8') as f:
-        season_data = json.load(f)
-        
-    return district_data, season_data
+    # 1. Демография (Пол + Группы болезней)
+    # Берем топ-10 групп болезней по количеству пациентов
+    df_demography = con.execute("""
+        SELECT disease_group, age_group, male_patients, female_patients, total_patients
+        FROM insight_gender_disease
+        ORDER BY total_patients DESC
+        LIMIT 15
+    """).df()
 
-def prepare_dfs(district_data, season_data):
-    # (Код без изменений - копируй свою функцию prepare_dfs сюда)
-    dist_rows = []
-    for dist, diseases in district_data.items():
-        for disease, count in diseases.items():
-            dist_rows.append({'Район': dist, 'Заболевание': disease, 'Случаев': count})
-    df_dist = pd.DataFrame(dist_rows)
+    # 2. Финансы (Стоимость лечения)
+    df_finance = con.execute("""
+        SELECT disease_group, avg_cost_per_prescription, avg_cost_per_patient
+        FROM insight_cost_by_disease
+        ORDER BY avg_cost_per_patient DESC
+        LIMIT 10
+    """).df()
+
+    # 3. География (Регионы и популярность)
+    df_geo = con.execute("""
+        SELECT region, SUM(prescriptions_count) as total_prescriptions
+        FROM insight_region_drug_choice
+        GROUP BY region
+        ORDER BY total_prescriptions DESC
+    """).df()
     
-    seas_rows = []
-    for season, diseases in season_data.items():
-        for disease, count in diseases.items():
-            seas_rows.append({'Сезон': season, 'Заболевание': disease, 'Случаев': count})
-    df_seas = pd.DataFrame(seas_rows)
-    
-    season_order = {'Зима': 1, 'Весна': 2, 'Лето': 3, 'Осень': 4}
-    if not df_seas.empty:
-        df_seas['order'] = df_seas['Сезон'].map(season_order)
-        df_seas = df_seas.sort_values('order')
-    return df_dist, df_seas
+    # 4. Сезонность (Это тяжелый запрос к сырой таблице, но DuckDB справится быстро)
+    # Агрегируем по месяцам за все время
+    df_season = con.execute("""
+        SELECT 
+            strftime(дата_рецепта, '%Y-%m') as month_year,
+            COUNT(*) as cases
+        FROM prescriptions
+        GROUP BY month_year
+        ORDER BY month_year
+    """).df()
 
-# --- Интерфейс ---
-st.title("Medical Insight: Аналитика Санкт-Петербурга")
+    con.close()
+    return df_demography, df_finance, df_geo, df_season
 
-district_json, season_json = load_stats()
+# --- ИНТЕРФЕЙС ---
 
-# Логика для дашборда
-if district_json:
-    df_dist, df_seas = prepare_dfs(district_json, season_json)
-else:
-    # Заглушка, чтобы не падало, если json пока нет
-    df_dist, df_seas = pd.DataFrame(), pd.DataFrame()
+st.title("🏥 Medical Insight: Центр Аналитики")
+st.markdown("Интерактивная панель управления медицинскими данными Санкт-Петербурга.")
 
+# Загрузка данных
+df_demo, df_finance, df_geo, df_season = load_dashboard_data()
+
+if df_demo is None:
+    st.error(f"❌ База данных не найдена по пути: `{DB_PATH}`. Запустите `python scripts_db/01_setup_db.py`")
+    st.stop()
+
+# ВКЛАДКИ
 tab_dashboard, tab_agent = st.tabs(["📊 Аналитический Дашборд", "🤖 AI Агент"])
 
-# === ВКЛАДКА 1: ДАШБОРД (Твой код без изменений) ===
+# === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
 with tab_dashboard:
-    if df_dist.empty:
-        st.warning("⚠️ Файлы JSON для дашборда не найдены в папке output/. Запустите предобработку.")
-    else:
-        st.markdown("### Географический анализ заболеваемости")
-        col1, col2, col3 = st.columns(3)
-        total_cases = df_dist['Случаев'].sum()
-        top_district = df_dist.groupby('Район')['Случаев'].sum().idxmax()
-        top_disease = df_dist.groupby('Заболевание')['Случаев'].sum().idxmax()
-        
-        col1.metric("Всего обращений", f"{total_cases:,}")
-        col2.metric("Самый 'больной' район", top_district)
-        col3.metric("Самая частая болезнь", top_disease)
-        
-        st.divider()
+    
+    # KPI (Метрики сверху)
+    col1, col2, col3, col4 = st.columns(4)
+    total_patients_kpi = df_demo['total_patients'].sum()
+    avg_check_kpi = df_finance['avg_cost_per_prescription'].mean()
+    top_region_kpi = df_geo.iloc[0]['region']
+    
+    col1.metric("Пациентов в выборке", f"{total_patients_kpi:,.0f}")
+    col2.metric("Ср. чек рецепта", f"{avg_check_kpi:.1f} ₽")
+    col3.metric("Самый активный район", top_region_kpi)
+    col4.metric("Всего категорий болезней", len(df_demo))
+    
+    st.divider()
 
-        col_chart1, col_chart2 = st.columns([2, 1])
-        with col_chart1:
-            st.subheader("Распределение по районам")
-            fig_dist = px.bar(df_dist, x="Район", y="Случаев", color="Заболевание")
-            st.plotly_chart(fig_dist, use_container_width=True)
-            
-        with col_chart2:
-            st.subheader("Детализация района")
-            selected_dist = st.selectbox("Выберите район:", df_dist['Район'].unique())
-            filtered_df = df_dist[df_dist['Район'] == selected_dist]
-            fig_pie = px.pie(filtered_df, values='Случаев', names='Заболевание')
-            st.plotly_chart(fig_pie, use_container_width=True)
+    # РЯД 1: ДЕМОГРАФИЯ И ГЕОГРАФИЯ
+    c1, c2 = st.columns([1, 1])
+    
+    with c1:
+        st.subheader("👥 Структура пациентов (М vs Ж)")
+        # Преобразуем данные для красивого графика
+        # Нам нужно "расплавить" (melt) таблицу, чтобы Seaborn/Plotly поняли формат
+        df_melted = df_demo.melt(
+            id_vars=["disease_group"], 
+            value_vars=["male_patients", "female_patients"], 
+            var_name="Пол", 
+            value_name="Пациенты"
+        )
+        
+        fig_demo = px.bar(
+            df_melted, 
+            x="Пациенты", 
+            y="disease_group", 
+            color="Пол", 
+            orientation='h',
+            title="Кого больше по группам болезней?",
+            color_discrete_map={"male_patients": "#636EFA", "female_patients": "#EF553B"},
+            barmode='group' # Или 'relative' для стека
+        )
+        st.plotly_chart(fig_demo, use_container_width=True)
+
+    with c2:
+        st.subheader("🌍 Загруженность районов")
+        fig_geo = px.bar(
+            df_geo,
+            x="region",
+            y="total_prescriptions",
+            color="total_prescriptions",
+            title="Количество рецептов по районам",
+            color_continuous_scale="Viridis"
+        )
+        st.plotly_chart(fig_geo, use_container_width=True)
+
+    # РЯД 2: ФИНАНСЫ И СЕЗОННОСТЬ
+    c3, c4 = st.columns([1, 1])
+    
+    with c3:
+        st.subheader("💰 Самые 'дорогие' болезни")
+        fig_fin = px.scatter(
+            df_finance,
+            x="avg_cost_per_prescription",
+            y="avg_cost_per_patient",
+            size="avg_cost_per_patient",
+            color="disease_group",
+            title="Стоимость рецепта vs Стоимость лечения пациента",
+            hover_name="disease_group"
+        )
+        st.plotly_chart(fig_fin, use_container_width=True)
+        
+    with c4:
+        st.subheader("📅 Динамика обращений")
+        fig_season = px.area(
+            df_season,
+            x="month_year",
+            y="cases",
+            title="Тренд выдачи рецептов по месяцам",
+            markers=True
+        )
+        st.plotly_chart(fig_season, use_container_width=True)
 
 # === ВКЛАДКА 2: АГЕНТ (ОБНОВЛЕННАЯ ЛОГИКА) ===
 with tab_agent:
-    st.header("Чат с SQL-агентом")
+    st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
     
-    # 1. Получаем ключ
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # 1. Проверка ключа OpenRouter
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    
     if not api_key:
-        api_key = st.text_input("Введите API Key", type="password")
-        if not api_key:
-            st.stop()
+        st.warning("⚠️ Ключ OPENROUTER_API_KEY не найден в .env файле.")
+        api_key = st.text_input("Введите ключ OpenRouter вручную:", type="password")
+        
+    if not api_key:
+        st.stop()
 
     # 2. История сообщений
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": "Я подключен к базе данных DuckDB. Задавайте сложные вопросы, например: 'Сколько женщин заболело ОРВИ в Центральном районе?'"}
+            {"role": "assistant", "content": "Я подключен к базе данных через OpenRouter. Могу анализировать сложные запросы. О чем вам рассказать?"}
         ]
 
     for msg in st.session_state.messages:
@@ -115,19 +191,19 @@ with tab_agent:
 
     # 3. Обработка вопроса
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
+        # Сохраняем вопрос пользователя
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # Генерируем ответ
         with st.chat_message("assistant"):
-            # --- ВОТ ТУТ ГЛАВНОЕ ИЗМЕНЕНИЕ ---
             try:
-                # Инициализируем наш новый класс
-                sql_agent = MedicalSQLAgent(api_key)
+                # Инициализируем агента OpenRouter
+                agent = OpenRouterSQLAgent(api_key)
                 
-                with st.spinner("🤖 Пишу SQL запрос и опрашиваю базу данных..."):
-                    # Вызываем метод answer(), который делает всю магию
-                    final_response = sql_agent.answer(prompt)
+                with st.spinner("🤖 Llama 3.3 думает и пишет SQL..."):
+                    final_response = agent.answer(prompt)
                 
                 st.markdown(final_response)
                 st.session_state.messages.append({"role": "assistant", "content": final_response})
