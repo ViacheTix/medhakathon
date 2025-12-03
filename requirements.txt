@@ -8,6 +8,7 @@ langsmith==0.1.120
 pandas
 numpy
 openpyxl
+tabulate  # <--- ДОБАВЛЕНО: Нужен для df.to_markdown()
 
 # UI & Visualization
 streamlit
