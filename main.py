@@ -1,96 +1,185 @@
 import streamlit as st
 import pandas as pd
-import json
 import plotly.express as px
+import duckdb
 import os
 from dotenv import load_dotenv
 
-# --- импорт класса LLM ---
-from agent import MedicalSQLAgent 
+# Импортируем твоего агента
+from agent import MedicalSQLAgent # Новый (OpenRouter)
 
 load_dotenv()
 
-# --- Настройки страницы ---
+# --- КОНФИГУРАЦИЯ ---
+DB_PATH = "db/medinsight.duckdb"
 st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥")
 
-# --- Загрузка данных для ДАШБОРДА (Оставляем как есть, это для графиков) ---
+# --- ФУНКЦИИ ЗАГРУЗКИ ДАННЫХ ---
 @st.cache_data
-def load_stats():
-    # Проверяем пути - у тебя в коде было output/, я оставил как у тебя
-    if not os.path.exists('output/stats_by_district.json'):
-        return None, None
+def load_dashboard_data():
+    if not os.path.exists(DB_PATH):
+        return None, None, None, None, None, None
 
-    with open('output/stats_by_district.json', 'r', encoding='utf-8') as f:
-        district_data = json.load(f)
+    con = duckdb.connect(DB_PATH, read_only=True)
     
-    with open('output/stats_by_season.json', 'r', encoding='utf-8') as f:
-        season_data = json.load(f)
-        
-    return district_data, season_data
+    # 1. Демография (Пол) - Прямо из таблицы пациентов
+    df_gender = con.execute("""
+        SELECT пол, COUNT(*) as count 
+        FROM patients 
+        GROUP BY пол
+    """).df()
 
-def prepare_dfs(district_data, season_data):
-    # (Код без изменений - копируй свою функцию prepare_dfs сюда)
-    dist_rows = []
-    for dist, diseases in district_data.items():
-        for disease, count in diseases.items():
-            dist_rows.append({'Район': dist, 'Заболевание': disease, 'Случаев': count})
-    df_dist = pd.DataFrame(dist_rows)
+    # 2. Демография (Возраст) - Вычисляем возраст на лету
+    # date_diff('year', start, end) работает очень быстро в DuckDB
+    df_age = con.execute("""
+        SELECT 
+            date_diff('year', дата_рождения, CURRENT_DATE) as age
+        FROM patients
+        WHERE дата_рождения IS NOT NULL
+    """).df()
+
+    # 3. География ПАЦИЕНТОВ (Где они живут)
+    df_district_patients = con.execute("""
+        SELECT район_проживания, COUNT(*) as count
+        FROM patients
+        WHERE район_проживания IS NOT NULL
+        GROUP BY район_проживания
+        ORDER BY count DESC
+    """).df()
+
+    # 4. Финансы (Стоимость лечения) - из витрин
+    df_finance = con.execute("""
+        SELECT disease_group, avg_cost_per_prescription, avg_cost_per_patient
+        FROM insight_cost_by_disease
+        ORDER BY avg_cost_per_patient DESC
+        LIMIT 10
+    """).df()
+
+    # 5. География ЛЕКАРСТВ (Где больше выписывают) - из витрин
+    df_geo_drugs = con.execute("""
+        SELECT region, SUM(prescriptions_count) as total_prescriptions
+        FROM insight_region_drug_choice
+        GROUP BY region
+        ORDER BY total_prescriptions DESC
+    """).df()
     
-    seas_rows = []
-    for season, diseases in season_data.items():
-        for disease, count in diseases.items():
-            seas_rows.append({'Сезон': season, 'Заболевание': disease, 'Случаев': count})
-    df_seas = pd.DataFrame(seas_rows)
-    
-    season_order = {'Зима': 1, 'Весна': 2, 'Лето': 3, 'Осень': 4}
-    if not df_seas.empty:
-        df_seas['order'] = df_seas['Сезон'].map(season_order)
-        df_seas = df_seas.sort_values('order')
-    return df_dist, df_seas
+    # 6. Сезонность
+    df_season = con.execute("""
+        SELECT 
+            strftime(дата_рецепта, '%Y-%m') as month_year,
+            COUNT(*) as cases
+        FROM prescriptions
+        GROUP BY month_year
+        ORDER BY month_year
+    """).df()
 
-# --- Интерфейс ---
-st.title("Medical Insight: Аналитика Санкт-Петербурга")
+    con.close()
+    return df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season
 
-district_json, season_json = load_stats()
+# --- ИНТЕРФЕЙС ---
 
-# Логика для дашборда
-if district_json:
-    df_dist, df_seas = prepare_dfs(district_json, season_json)
-else:
-    # Заглушка, чтобы не падало, если json пока нет
-    df_dist, df_seas = pd.DataFrame(), pd.DataFrame()
+st.title("🏥 Medical Insight: Центр Аналитики")
+st.markdown("Интерактивная панель управления медицинскими данными Санкт-Петербурга.")
 
+# Загрузка
+data = load_dashboard_data()
+df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season = data
+
+if df_gender is None:
+    st.error(f"❌ База данных не найдена по пути: {DB_PATH}.")
+    st.stop()
+
+# ВКЛАДКИ
 tab_dashboard, tab_agent = st.tabs(["📊 Аналитический Дашборд", "🤖 AI Агент"])
-
-# === ВКЛАДКА 1: ДАШБОРД (Твой код без изменений) ===
+# === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
 with tab_dashboard:
-    if df_dist.empty:
-        st.warning("⚠️ Файлы JSON для дашборда не найдены в папке output/. Запустите предобработку.")
-    else:
-        st.markdown("### Географический анализ заболеваемости")
-        col1, col2, col3 = st.columns(3)
-        total_cases = df_dist['Случаев'].sum()
-        top_district = df_dist.groupby('Район')['Случаев'].sum().idxmax()
-        top_disease = df_dist.groupby('Заболевание')['Случаев'].sum().idxmax()
-        
-        col1.metric("Всего обращений", f"{total_cases:,}")
-        col2.metric("Самый 'больной' район", top_district)
-        col3.metric("Самая частая болезнь", top_disease)
-        
-        st.divider()
+    
+    # KPI
+    col1, col2, col3, col4 = st.columns(4)
+    total_patients_kpi = df_gender['count'].sum()
+    avg_age_kpi = df_age['age'].mean()
+    top_district_kpi = df_district_patients.iloc[0]['район_проживания']
+    
+    col1.metric("Всего пациентов", f"{total_patients_kpi:,.0f}")
+    col2.metric("Средний возраст", f"{avg_age_kpi:.1f} лет")
+    col3.metric("Самый населенный район", top_district_kpi)
+    col4.metric("Всего рецептов", f"{df_season['cases'].sum():,.0f}")
+    
+    st.divider()
 
-        col_chart1, col_chart2 = st.columns([2, 1])
-        with col_chart1:
-            st.subheader("Распределение по районам")
-            fig_dist = px.bar(df_dist, x="Район", y="Случаев", color="Заболевание")
-            st.plotly_chart(fig_dist, use_container_width=True)
-            
-        with col_chart2:
-            st.subheader("Детализация района")
-            selected_dist = st.selectbox("Выберите район:", df_dist['Район'].unique())
-            filtered_df = df_dist[df_dist['Район'] == selected_dist]
-            fig_pie = px.pie(filtered_df, values='Случаев', names='Заболевание')
-            st.plotly_chart(fig_pie, use_container_width=True)
+    # БЛОК 1: ПОРТРЕТ ПАЦИЕНТА (Пол + Возраст)
+    st.subheader("👤 Портрет пациента")
+    c1, c2 = st.columns([1, 2]) # Левая колонка уже, правая шире
+    
+    with c1:
+        # Круговая диаграмма пола
+        fig_gender = px.pie(
+            df_gender, 
+            values='count', 
+            names='пол',
+            title='Распределение по полу',
+            color_discrete_map={"М": "#636EFA", "Ж": "#EF553B"},
+            hole=0.4
+        )
+        st.plotly_chart(fig_gender, use_container_width=True)
+        
+    with c2:
+        # Гистограмма возраста
+        fig_age = px.histogram(
+            df_age, 
+            x="age", 
+            nbins=30, # Количество столбиков
+            title="Возрастная структура (Гистограмма)",
+            labels={'age': 'Возраст', 'count': 'Кол-во пациентов'},
+            color_discrete_sequence=['#00CC96']
+        )
+        fig_age.update_layout(bargap=0.1) # Зазор между столбиками
+        st.plotly_chart(fig_age, use_container_width=True)
+
+    st.divider()
+
+    # БЛОК 2: ГЕОГРАФИЯ ПАЦИЕНТОВ
+    st.subheader("🏠 Где живут наши пациенты?")
+    # Treemap - отлично подходит для показа долей районов
+    fig_tree = px.treemap(
+        df_district_patients,
+        path=['район_проживания'],
+        values='count',
+        title='Распределение пациентов по районам (Площадь = Кол-во)',
+        color='count',
+        color_continuous_scale='Blues'
+    )
+    st.plotly_chart(fig_tree, use_container_width=True)
+
+    st.divider()
+
+    # БЛОК 3: ФИНАНСЫ И СЕЗОННОСТЬ (Оставляем как было, это важные инсайты)
+    c3, c4 = st.columns([1, 1])
+    
+    with c3:
+        st.subheader("💰 Экономика лечения")
+        fig_fin = px.scatter(
+            df_finance,
+            x="avg_cost_per_prescription",
+            y="avg_cost_per_patient",
+            size="avg_cost_per_patient",
+            color="disease_group",
+            title="Стоимость рецепта vs Пациента",
+            hover_name="disease_group"
+        )
+        st.plotly_chart(fig_fin, use_container_width=True)
+        
+    with c4:
+        st.subheader("📅 Динамика обращений")
+        fig_season = px.area(
+            df_season,
+            x="month_year",
+            y="cases",
+            title="Выдача рецептов по месяцам",
+            markers=True
+        )
+        st.plotly_chart(fig_season, use_container_width=True)
+
 
 # === ВКЛАДКА 2: АГЕНТ (ОБНОВЛЕННАЯ ЛОГИКА) ===
 with tab_agent:
