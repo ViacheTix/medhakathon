@@ -161,12 +161,12 @@ with st.sidebar:
     selected = option_menu(
         menu_title="Меню",  # Название меню
         options=["Дашборд", "AI Агент"],  # Пункты
-        icons=["bar-chart-fill", "robot"],  # Иконки (Bootstrap icons)
+        icons=["bar-chart-fill", "chat-left-text-fill"],  # Иконки (Bootstrap icons)
         menu_icon="cast",  # Иконка меню
-        default_index=0,  # Что выбрано по умолчанию
+        default_index=0,  # выбрано по умолчанию
         styles={
             "container": {"padding": "5!important", "background-color": "#fafafa"},
-            "icon": {"color": "orange", "font-size": "25px"}, 
+            "icon": {"color": "orange", "font-size": "15px"}, 
             "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px", "--hover-color": "#eee"},
             "nav-link-selected": {"background-color": "#1f77b4"},
         }
