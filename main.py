@@ -1,12 +1,12 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import duckdb
+
 import os
 from dotenv import load_dotenv
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import duckdb
 
-# Импортируем твоего агента
-from agent import MedicalSQLAgent # Новый (OpenRouter)
+from agent import OpenRouterSQLAgent # Новый сервис
 
 load_dotenv()
 
@@ -343,19 +343,22 @@ with tab_dashboard:
 
 # === ВКЛАДКА 2: АГЕНТ (ОБНОВЛЕННАЯ ЛОГИКА) ===
 with tab_agent:
-    st.header("Чат с SQL-агентом")
+    st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
     
-    # 1. Получаем ключ
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # 1. Проверка ключа OpenRouter
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    
     if not api_key:
-        api_key = st.text_input("Введите API Key", type="password")
-        if not api_key:
-            st.stop()
+        st.warning("⚠️ Ключ OPENROUTER_API_KEY не найден в .env файле.")
+        api_key = st.text_input("Введите ключ OpenRouter вручную:", type="password")
+        
+    if not api_key:
+        st.stop()
 
     # 2. История сообщений
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "assistant", "content": "Я подключен к базе данных DuckDB. Задавайте сложные вопросы, например: 'Сколько женщин заболело ОРВИ в Центральном районе?'"}
+            {"role": "assistant", "content": "Я подключен к базе данных через OpenRouter. Могу анализировать сложные запросы. О чем вам рассказать?"}
         ]
 
     for msg in st.session_state.messages:
@@ -364,19 +367,19 @@ with tab_agent:
 
     # 3. Обработка вопроса
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
+        # Сохраняем вопрос пользователя
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # Генерируем ответ
         with st.chat_message("assistant"):
-            # --- ВОТ ТУТ ГЛАВНОЕ ИЗМЕНЕНИЕ ---
             try:
-                # Инициализируем наш новый класс
-                sql_agent = MedicalSQLAgent(api_key)
+                # Инициализируем агента OpenRouter
+                agent = OpenRouterSQLAgent(api_key)
                 
-                with st.spinner("🤖 Пишу SQL запрос и опрашиваю базу данных..."):
-                    # Вызываем метод answer(), который делает всю магию
-                    final_response = sql_agent.answer(prompt)
+                with st.spinner("🤖 Llama 3.3 думает и пишет SQL..."):
+                    final_response = agent.answer(prompt)
                 
                 st.markdown(final_response)
                 st.session_state.messages.append({"role": "assistant", "content": final_response})
