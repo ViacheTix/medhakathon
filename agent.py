@@ -32,21 +32,29 @@ A. insight_cost_by_disease (Финансы):
    - avg_cost_per_prescription (DOUBLE): Средняя цена рецепта.
    - avg_cost_per_patient (DOUBLE): Средняя цена лечения пациента.
    - top_expensive_drugs (VARCHAR): Список дорогих лекарств.
+   - date_updated (TIMESTAMP)
    *Используй для вопросов про стоимость лечения.*
 
 B. insight_gender_disease (Демография):
    - disease_group (VARCHAR).
    - age_group (VARCHAR): Возраст ('18-25', '60+').
-   - male_patients (BIGINT), female_patients (BIGINT).
+   - male_patients (BIGINT), 
+   - female_patients (BIGINT).
+   - total_patients (BIGINT)
    - female_minus_male (BIGINT): Разница полов.
    - conclusion (VARCHAR): Готовый текстовый вывод.
+   - top_diagnoses (VARCHAR)
+   - date_updated (TIMESTAMP)
    *Используй для вопросов: "Кто чаще болеет?", "Распределение по полу".*
 
 C. insight_region_drug_choice (География и Лекарства):
    - region (VARCHAR): Район.
    - disease_group (VARCHAR).
+   - drug_code (VARCHAR)
    - drug_name (VARCHAR): Название лекарства.
    - prescriptions_count (BIGINT): Популярность.
+   - prescriptions_share (DOUBLE)
+   - date_updated (TIMESTAMP)
    *Используй для вопросов: "Что выписывают в Центральном районе?", "Популярные лекарства".*
 
 === 2. СЫРЫЕ ДАННЫЕ (BASE TABLES) ===
@@ -71,8 +79,10 @@ C. insight_region_drug_choice (География и Лекарства):
 
 4. drugs (справочник):
    - код_препарата (VARCHAR) [PK]
-   - Торговое название (VARCHAR)
+   - дозировка (VARCHAR)
+   - торговое_название (VARCHAR)
    - стоимость (DOUBLE)
+   - полное_название (VARCHAR)
 
    Если по имеющейся структуре данных БД невозможно написать SQL запрос,
    то в качестве ответа дай пустую строку.

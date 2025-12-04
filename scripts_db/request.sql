@@ -1,5 +1,6 @@
-SELECT T1.drug_name, T1.prescriptions_count
-FROM insight_region_drug_choice AS T1
-WHERE T1.region ILIKE '%Центральный%' AND T1.disease_group ILIKE '%органы дыхания%'
-ORDER BY T1.prescriptions_count DESC
-LIMIT 5;
+SELECT region, AVG(avg_cost_per_patient) as avg_cost
+FROM insight_cost_by_disease
+WHERE disease_group ILIKE '%болезни нервной системы%'
+GROUP BY region
+ORDER BY avg_cost DESC
+LIMIT 1;
