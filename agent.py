@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 import subprocess
 import pandas as pd
 import re
@@ -7,147 +7,157 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
 load_dotenv()
 
 # --- КОНФИГУРАЦИЯ ---
-# Пути к скриптам базы данных
 SCRIPTS_DIR = "scripts_db"
 REQUEST_FILE = os.path.join(SCRIPTS_DIR, "request.sql")
 ANSWER_FILE = os.path.join(SCRIPTS_DIR, "answer.csv")
-RUNNER_SCRIPT = "run_sql_safe.py" # Имя скрипта внутри папки scripts_db
+RUNNER_SCRIPT = "run_sql_safe.py"
 
-# --- ОБНОВЛЕННАЯ СХЕМА БД ---
+# --- СХЕМА БД (ОСТАВЛЯЕМ КАК ЕСТЬ) ---
 DB_SCHEMA = """
 Ты работаешь с базой данных DuckDB 'medinsight.duckdb'.
 В базе есть "Сырые данные" (Base Tables) и "Аналитические витрины" (Insight Tables).
 
---- ПРИОРИТЕТ ВЫБОРА ТАБЛИЦ ---
-1. СНАЧАЛА проверь, можно ли ответить на вопрос через таблицы `insight_...`. Это готовые агрегаты, они точнее.
-2. ТОЛЬКО ЕСЛИ в витринах нет нужных данных (нужен сложный фильтр по датам или редкая выборка), используй сырые таблицы (`prescriptions`...).
+--- ПРИОРИТЕТ ВЫБОРА ТАБЛИЦ (CRITICAL) ---
+1. СНАЧАЛА смотри на таблицы `insight_...`. Они маленькие и быстрые.
+2. ТОЛЬКО ЕСЛИ там нет ответа, иди в тяжелые таблицы `prescriptions`.
 
 === 1. АНАЛИТИЧЕСКИЕ ВИТРИНЫ (INSIGHT TABLES) ===
 
-A. insight_cost_by_disease (Финансы):
+A. insight_cost_by_disease (Всего 20 строк!):
+   * Используй для вопросов про деньги, стоимость лечения, самые дорогие болезни.
    - disease_group (VARCHAR): Группа болезней.
-   - avg_cost_per_prescription (DOUBLE): Средняя цена рецепта.
-   - avg_cost_per_patient (DOUBLE): Средняя цена лечения пациента.
-   - top_expensive_drugs (VARCHAR): Список дорогих лекарств.
-   - date_updated (TIMESTAMP)
-   *Используй для вопросов про стоимость лечения.*
+   - avg_cost_per_prescription (DOUBLE): Ср. чек рецепта.
+   - avg_cost_per_patient (DOUBLE): Ср. стоимость на пациента.
+   - top_expensive_drugs (VARCHAR): Список дорогих лекарств (текст).
 
-B. insight_gender_disease (Демография):
+B. insight_gender_disease (Всего 72 строки!):
+   * Используй для демографии (Пол, Возраст, "Кто чаще болеет").
    - disease_group (VARCHAR).
-   - age_group (VARCHAR): Возраст ('18-25', '60+').
-   - male_patients (BIGINT), 
-   - female_patients (BIGINT).
-   - total_patients (BIGINT)
-   - female_minus_male (BIGINT): Разница полов.
+   - age_group (VARCHAR): Группы '0-17', '18-25' и т.д.
+   - male_patients (BIGINT), female_patients (BIGINT).
+   - total_patients (BIGINT).
+   - female_minus_male (BIGINT): Разница (>0 значит женщин больше).
    - conclusion (VARCHAR): Готовый текстовый вывод.
-   - top_diagnoses (VARCHAR)
-   - date_updated (TIMESTAMP)
-   *Используй для вопросов: "Кто чаще болеет?", "Распределение по полу".*
+   - top_diagnoses (VARCHAR): Популярные диагнозы в группе.
 
-C. insight_region_drug_choice (География и Лекарства):
-   - region (VARCHAR): Район.
+C. insight_region_drug_choice (~150k строк):
+   * Используй для анализа по Регионам/Районам.
+   - region (VARCHAR): Район проживания.
    - disease_group (VARCHAR).
-   - drug_code (VARCHAR)
-   - drug_name (VARCHAR): Название лекарства.
-   - prescriptions_count (BIGINT): Популярность.
-   - prescriptions_share (DOUBLE)
-   - date_updated (TIMESTAMP)
-   *Используй для вопросов: "Что выписывают в Центральном районе?", "Популярные лекарства".*
+   - drug_code (VARCHAR), drug_name (VARCHAR).
+   - prescriptions_count (BIGINT): Сколько раз выписали.
+   - prescriptions_share (DOUBLE): Доля популярности (0.0 - 1.0).
 
 === 2. СЫРЫЕ ДАННЫЕ (BASE TABLES) ===
 
-1. patients (пациенты) [379k строк]:
+1. patients (~379k строк):
    - id_пациента (VARCHAR) [PK]
-   - дата_рождения (DATE)
-   - пол (VARCHAR) -> 'М', 'Ж'
-   - район_проживания (VARCHAR)
-   - регион (VARCHAR)
+   - дата_рождения (DATE) -> считай возраст через `date_diff('year', дата_рождения, CURRENT_DATE)`.
+   - пол (VARCHAR) -> 'М', 'Ж'.
+   - район_проживания (VARCHAR).
+   - регион (VARCHAR).
 
-2. prescriptions (рецепты) [1 млн строк]:
+2. prescriptions (ТЯЖЕЛАЯ ТАБЛИЦА):
    - id_пациента (VARCHAR) [FK]
-   - дата_рецепта (TIMESTAMP)
+   - дата_рецепта (TIMESTAMP) -> Используй для временных рядов (по месяцам/годам).
    - код_диагноза (VARCHAR) [FK]
-   - код_препарата (VARCHAR) [FK]
+   - код_препарата (VARCHAR) [FK] -> Это ID! Для названия нужен JOIN с drugs.
 
-3. diagnoses (справочник):
+3. diagnoses (14k строк):
    - код_мкб (VARCHAR) [PK]
-   - название_диагноза (VARCHAR) -> Поиск ILIKE.
-   - класс_заболевания (VARCHAR)
+   - название_диагноза (VARCHAR) -> Поиск через ILIKE.
+   - класс_заболевания (VARCHAR).
 
-4. drugs (справочник):
+4. drugs (3k строк):
    - код_препарата (VARCHAR) [PK]
-   - дозировка (VARCHAR)
-   - торговое_название (VARCHAR)
-   - стоимость (DOUBLE)
-   - полное_название (VARCHAR)
+   - Торговое название (VARCHAR) -> Используй для поиска лекарств.
+   - стоимость (DOUBLE).
+   - Полное_название (VARCHAR).
+   *ИГНОРИРУЙ колонки: column5, column6, column7 (это мусор).*
 
-   Если по имеющейся структуре данных БД невозможно написать SQL запрос,
-   то в качестве ответа дай пустую строку.
-=== ПРАВИЛА ГЕНЕРАЦИИ SQL (СОБЛЮДАЙ СТРОГО) ===
-   Никогда не пиши `WHERE name = 'Ветрянка'`.
-   ВСЕГДА пиши `WHERE name ILIKE '%Ветрянка%'`.
-   СИНОНИМЫ И МЕДИЦИНСКИЙ КОНТЕКСТ (КРИТИЧЕСКИ ВАЖНО):
-   Пользователь пишет простым языком. Ты должен искать медицинское.
-   Если вопрос подразумевает рейтинг (Топ, Чаще всего) -> ВСЕГДА `ORDER BY ... DESC LIMIT 5`.
-   Генерируй ТОЛЬКО чистый SQL код. Без Markdown.
+=== ПРАВИЛА ГЕНЕРАЦИИ SQL ===
+1. СИНОНИМЫ: Если ищешь болезнь в `diagnoses`, ищи и по `название_диагноза` (ILIKE '%народное%'), и по `класс_заболевания`.
+2. ПОИСК: Всегда используй `ILIKE` вместо `=`.
+3. ЛИМИТЫ: Для топов всегда `LIMIT 5`. Для динамики (графиков) - без лимита.
+4. СВЯЗИ: В таблице `prescriptions` лежат только коды. Всегда делай JOIN с `drugs` или `diagnoses`, если нужно название.
+5. ВЫВОД: Только SQL код. Без Markdown.
 """
 
 class OpenRouterSQLAgent:
     def __init__(self, api_key: str):
-        # Настройка OpenRouter
         self.llm = ChatOpenAI(
-            # MODEL SELECTION:
-            # "meta-llama/llama-3.3-70b-instruct" - Очень умная, дешевая.
-            # "anthropic/claude-3.5-sonnet" - Лучшая в мире, но дороже.
-            # "qwen/qwen-2.5-72b-instruct" - Топ для кода и SQL.
             model="meta-llama/llama-3.3-70b-instruct", 
-            
             openai_api_key=api_key,
             openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0,
-            # заголовки для OpenRouter
+            temperature=0.1, # Чуть выше 0, чтобы он мог выбирать варианты
             default_headers={
-                "HTTP-Referer": "https://medinsight-hack.com", # Это нам точно нужно?
-                "X-Title": "Medical Insight Agent"
+                "HTTP-Referer": "https://medinsight.com",
+                "X-Title": "Medical Agent"
             }
         )
-    # Очистка output'a запроса SQL от формата markdown
+
     def _clean_sql(self, text: str) -> str:
         text = text.strip()
+        # Иногда модель пишет пояснения до или после кода, вырезаем код
+        match = re.search(r'```sql(.*?)```', text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        
+        # Если кавычек нет, просто чистим
         text = re.sub(r'^```sql', '', text, flags=re.IGNORECASE)
         text = re.sub(r'^```', '', text)
         text = re.sub(r'```$', '', text)
         return text.strip()
-    # Просим LLM создать нам SQL запрос
+
     def _generate_sql(self, question: str) -> str:
+        """
+        Логика 'Лучший запрос': 
+        Мы просим модель подумать о 2-3 вариантах внутри (Chain of Thought), 
+        но выдать ТОЛЬКО финальный лучший код.
+        """
+        system_prompt = f"""{DB_SCHEMA}
+        
+        ТВОЯ ЗАДАЧА: Написать ЛУЧШИЙ SQL запрос для ответа на вопрос.
+        
+        АЛГОРИТМ МЫШЛЕНИЯ (Chain of Thought):
+        1. Сначала подумай, можно ли взять данные из таблиц `insight_...`? Это самый лучший вариант.
+        2. Если нет, подумай, как собрать данные из `prescriptions` через JOIN.
+        3. Сравни варианты. Выбери тот, который точнее и быстрее.
+        4. Если вопрос про динамику — не ставь LIMIT. Если про топ — ставь LIMIT 5.
+        
+        ВЫВОД:
+        Верни ТОЛЬКО финальный SQL код. Никаких рассуждений, никаких "Here is the code". Только SQL.
+        """
+        
         prompt = ChatPromptTemplate.from_messages([
-            ("system", f"{DB_SCHEMA}"),
+            ("system", system_prompt),
             ("human", question)
         ])
         chain = prompt | self.llm
         response = chain.invoke({})
         return self._clean_sql(response.content)
-    # Исполнение написанного SQL промпта и сохранение ответа в answer.csv
+
     def _execute_sql(self, sql_query: str) -> pd.DataFrame:
-        # Логика 1-в-1 как в agent.py
         if not os.path.exists(SCRIPTS_DIR):
             os.makedirs(SCRIPTS_DIR, exist_ok=True)
+            
         with open(REQUEST_FILE, "w", encoding="utf-8") as f:
             f.write(sql_query)
         
         try:
+            # ИСПОЛЬЗУЕМ sys.executable для фикса ошибки "SQL Error: Python"
             result = subprocess.run(
                 [sys.executable, RUNNER_SCRIPT, "request.sql"],
                 cwd=SCRIPTS_DIR,
                 capture_output=True,
                 text=True
             )
+            
             if result.returncode != 0:
-                print(f"SQL Error: {result.stderr}")
+                print(f"SQL Stderr: {result.stderr}")
                 return None
             
             if os.path.exists(ANSWER_FILE) and os.path.getsize(ANSWER_FILE) > 0:
@@ -155,26 +165,58 @@ class OpenRouterSQLAgent:
             else:
                 return pd.DataFrame()
         except Exception as e:
-            print(f"Exec Error: {e}")
+            print(f"Subprocess Error: {e}")
             return None
-    # Итоговый вердикт по данным от LLM
+
     def _analyze_data(self, question: str, df: pd.DataFrame, sql: str) -> str:
-        if df is None or df.empty:
-            return "Данные не найдены или ошибка SQL."
+        """
+        Анализ данных с защитой от галлюцинаций.
+        """
+        if df is None:
+            return "⚠️ Произошла ошибка при выполнении запроса к базе данных. Попробуйте переформулировать."
+        if df.empty:
+            return "По вашему запросу данных не найдено. Возможно, стоит упростить вопрос."
             
-        data_md = df.to_markdown(index=False)
+        # ЗАЩИТА ОТ ЗАВИСАНИЯ:
+        # Передаем только первые 40 строк. Если строк больше, модель должна сделать вывод по топу.
+        # Это предотвращает бесконечную генерацию текста.
+        df_preview = df.head(40)
+        data_md = df_preview.to_markdown(index=False)
+        
+        row_count = len(df)
+        limit_warning = f"(Показаны первые 40 строк из {row_count})" if row_count > 40 else ""
+        
+        system_prompt = """Ты — профессиональный медицинский аналитик.
+        Твоя задача — дать краткий и четкий ответ на вопрос пользователя, основываясь ТОЛЬКО на предоставленных данных.
+        
+        СТРОГИЕ ЗАПРЕТЫ (ЧТОБЫ НЕ БЫЛО ОШИБОК):
+        1. ЗАПРЕЩЕНО описывать структуру таблицы ("Таблица содержит столбцы...").
+        2. ЗАПРЕЩЕНО перечислять типы данных ("VARCHAR", "FLOAT").
+        3. ЗАПРЕЩЕНО выводить саму таблицу в ответе, если пользователь не просил список.
+        4. ЗАПРЕЩЕНО писать "Пример данных из таблицы drugs...".
+        
+        ЧТО НУЖНО ДЕЛАТЬ:
+        1. Сразу отвечай на вопрос. (Пример: "Больше всего болеют в Невском районе...").
+        2. Приводи конкретные цифры из таблицы.
+        3. Если видишь явный тренд — скажи о нем.
+        """
         
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "Ты — экспертный медицинский аналитик. Сделай вывод на основе данных."),
-            ("human", f"Вопрос: {question}\nSQL: {sql}\nДанные:\n{data_md}")
+            ("system", system_prompt),
+            ("human", f"Вопрос пользователя: {question}\n\nДанные SQL ({limit_warning}):\n{data_md}")
         ])
+        
         chain = prompt | self.llm
         response = chain.invoke({})
         return response.content
 
     def answer(self, user_question: str):
-        print(f"Ожидаем ответ от OpenRouter…")
+        # 1. Генерация (с внутренней проверкой лучшего варианта)
         sql = self._generate_sql(user_question)
-        print(f"SQL: {sql}")
+        print(f"DEBUG SQL: {sql}")
+        
+        # 2. Выполнение
         df = self._execute_sql(sql)
+        
+        # 3. Анализ (на обрезанных данных)
         return self._analyze_data(user_question, df, sql)
