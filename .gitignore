@@ -13,6 +13,7 @@ input/
 *.xlsx
 *.json
 *.rtf
+scripts_db/request.sql
 
 # Python cache
 __pycache__/
