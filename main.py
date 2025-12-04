@@ -6,11 +6,34 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import plotly.express as px
 import duckdb
+import uuid
 
 from agent import OpenRouterSQLAgent # Новый сервис
 
 load_dotenv()
+def create_new_chat():
+    new_id = str(uuid.uuid4())[:8]
+    st.session_state.chat_histories[new_id] = {
+        "name": f"Чат {len(st.session_state.chat_histories) + 1}",
+        "messages": [
+            {"role": "assistant", "content": "Новый чат открыт. Чем могу помочь?"}
+        ]
+    }
+    st.session_state.current_chat_id = new_id
 
+def delete_chat(chat_id):
+    if chat_id in st.session_state.chat_histories:
+        del st.session_state.chat_histories[chat_id]
+
+    if st.session_state.current_chat_id == chat_id:
+        if st.session_state.chat_histories:
+            st.session_state.current_chat_id = next(iter(st.session_state.chat_histories))
+        else:
+            create_new_chat()
+
+def switch_chat(chat_id):
+    st.session_state.current_chat_id = chat_id
+    
 def local_css():
     st.markdown(
         """
@@ -143,6 +166,12 @@ def load_dashboard_data():
     con.close()
     return df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season
 
+# --- ИНИЦИАЛИЗАЦИЯ ХРАНИЛИЩА ЧАТОВ ---
+if "chat_histories" not in st.session_state:
+    st.session_state.chat_histories = {}  # id → список сообщений
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = None
+
 # --- ИНТЕРФЕЙС ---
 
 st.title("🏥 Medical Insight: Центр Аналитики")
@@ -159,11 +188,11 @@ if df_gender is None:
 # ВКЛАДКИ
 with st.sidebar:
     selected = option_menu(
-        menu_title="Меню",  # Название меню
-        options=["Дашборд", "AI Агент"],  # Пункты
-        icons=["bar-chart-fill", "chat-left-text-fill"],  # Иконки (Bootstrap icons)
-        menu_icon="cast",  # Иконка меню
-        default_index=0,  # выбрано по умолчанию
+        menu_title="Меню",
+        options=["Дашборд", "AI Агент"],
+        icons=["bar-chart-fill", "chat-left-text-fill"],
+        menu_icon="cast",
+        default_index=0,
         styles={
             "container": {"padding": "5!important", "background-color": "#fafafa"},
             "icon": {"color": "orange", "font-size": "15px"}, 
@@ -171,6 +200,36 @@ with st.sidebar:
             "nav-link-selected": {"background-color": "#1f77b4"},
         }
     )
+
+with st.sidebar:
+    st.subheader("Чаты")
+
+    for cid in list(st.session_state.chat_histories.keys()):
+        chat_data = st.session_state.chat_histories[cid]
+
+        col1, col2 = st.columns([4, 1])
+
+        with col1:
+            if st.button(chat_data["name"], key=f"open_{cid}"):
+                st.session_state.current_chat_id = cid
+
+        with col2:
+            if st.button("✖", key=f"del_{cid}"):
+                delete_chat(cid)
+                st.rerun()
+
+    if st.button("➕ Новый чат"):
+        create_new_chat()
+        st.rerun()
+
+# Если нет активного чата — создаем
+if st.session_state.current_chat_id is None:
+    create_new_chat()
+
+# Получаем текущую переписку
+chat_id = st.session_state.current_chat_id
+messages = st.session_state.chat_histories[chat_id]["messages"]
+
 # === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
 if selected == "Дашборд":
     st.title("📊 Аналитический Дашборд")
@@ -544,33 +603,26 @@ elif selected == "AI Агент":
         st.stop()
 
     # 2. История сообщений
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Я подключен к базе данных через OpenRouter. Могу анализировать сложные запросы. О чем вам рассказать?"}
-        ]
-
-    for msg in st.session_state.messages:
+    for msg in messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     # 3. Обработка вопроса
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
-        # Сохраняем вопрос пользователя
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.chat_histories[chat_id]["messages"].append({"role": "user", "content": prompt})
+
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Генерируем ответ
         with st.chat_message("assistant"):
             try:
-                # Инициализируем агента OpenRouter
                 agent = OpenRouterSQLAgent(api_key)
-                
-                with st.spinner("🤖 Llama 3.3 думает и пишет SQL..."):
-                    final_response = agent.answer(prompt)
-                
-                st.markdown(final_response)
-                st.session_state.messages.append({"role": "assistant", "content": final_response})
-                
+                with st.spinner("🤖 Думаю..."):
+                    answer = agent.answer(prompt)
+
+                st.markdown(answer)
+                st.session_state.chat_histories[chat_id]["messages"].append({"role": "assistant", "content": answer})
+
             except Exception as e:
                 st.error(f"Произошла ошибка: {e}")
+                st.session_state.chat_histories[chat_id]["messages"].append({"role": "assistant", "content": f"Ошибка: {e}"})
