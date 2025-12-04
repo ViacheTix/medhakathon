@@ -151,7 +151,7 @@ with tab_dashboard:
         values='count',
         title='Распределение пациентов по районам',
         color='count',
-        color_continuous_scale='PuBu'
+        color_continuous_scale='YlGnBu'
     )
 
     fig_tree.update_traces(
