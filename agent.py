@@ -1,3 +1,4 @@
+import sys
 import os
 import subprocess
 import pandas as pd
@@ -140,7 +141,7 @@ class OpenRouterSQLAgent:
         
         try:
             result = subprocess.run(
-                ["python3", RUNNER_SCRIPT, "request.sql"],
+                [sys.executable, RUNNER_SCRIPT, "request.sql"],
                 cwd=SCRIPTS_DIR,
                 capture_output=True,
                 text=True
