@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import streamlit as st
+from streamlit_option_menu import option_menu
 import plotly.express as px
 import duckdb
 
@@ -10,9 +11,75 @@ from agent import OpenRouterSQLAgent # Новый сервис
 
 load_dotenv()
 
+def local_css():
+    st.markdown(
+        """
+        <style>
+        /* 1. Уменьшение основного текста (кегль) */
+        html, body, [class*="css"]  {
+            font-size: 14px; 
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }
+
+        /* 2. Уменьшение заголовков */
+        h1 { font-size: 24px !important; }
+        h2 { font-size: 20px !important; }
+        h3 { font-size: 18px !important; }
+
+        /* 3. Изменение отступов (Margins/Padding) у главного контейнера */
+        .block-container {
+            padding-top: 2rem !important; /* Отступ сверху */
+            padding-bottom: 2rem !important;
+            padding-left: 3rem !important;
+            padding-right: 3rem !important;
+            max-width: 95% !important; /* Ширина контента */
+        }
+
+        /* 4. Стилизация метрик (KPI) - добавляем границы и тень */
+        [data-testid="stMetric"] {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            padding: 10px;
+            border-radius: 5px; /* Закругление углов */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* Легкая тень */
+        }
+        
+        /* Уменьшаем цифры в метриках */
+        [data-testid="stMetricValue"] {
+            font-size: 20px !important;
+        }
+
+        /* 5. Убираем лишние отступы между элементами */
+        .element-container {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* 6. Границы для вкладок (Tabs) */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 40px;
+            white-space: pre-wrap;
+            background-color: #f0f2f6;
+            border-radius: 4px 4px 0px 0px;
+            gap: 1px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #FFFFFF;
+            border-bottom: 2px solid #1f77b4;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
 # --- КОНФИГУРАЦИЯ ---
 DB_PATH = "db/medinsight.duckdb"
 st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥")
+local_css()
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ДАННЫХ ---
 @st.cache_data
@@ -90,10 +157,23 @@ if df_gender is None:
     st.stop()
 
 # ВКЛАДКИ
-tab_dashboard, tab_agent = st.tabs(["📊 Аналитический Дашборд", "🤖 AI Агент"])
+with st.sidebar:
+    selected = option_menu(
+        menu_title="Меню",  # Название меню
+        options=["Дашборд", "AI Агент"],  # Пункты
+        icons=["bar-chart-fill", "chat-left-text-fill"],  # Иконки (Bootstrap icons)
+        menu_icon="cast",  # Иконка меню
+        default_index=0,  # выбрано по умолчанию
+        styles={
+            "container": {"padding": "5!important", "background-color": "#fafafa"},
+            "icon": {"color": "orange", "font-size": "15px"}, 
+            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px", "--hover-color": "#eee"},
+            "nav-link-selected": {"background-color": "#1f77b4"},
+        }
+    )
 # === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
-with tab_dashboard:
-    
+if selected == "Дашборд":
+    st.title("📊 Аналитический Дашборд")
     # ----------------------------------------
     # KPI
     # ----------------------------------------
@@ -342,8 +422,10 @@ with tab_dashboard:
 
 
 # === ВКЛАДКА 2: АГЕНТ (ОБНОВЛЕННАЯ ЛОГИКА) ===
-with tab_agent:
-    st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
+elif selected == "AI Агент":
+    st.title("Чат с SQL-агентом")
+
+    # st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
     
     # 1. Проверка ключа OpenRouter
     api_key = os.getenv("OPENROUTER_API_KEY")
