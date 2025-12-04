@@ -1,18 +1,85 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import duckdb
+
 import os
 from dotenv import load_dotenv
+import pandas as pd
+import streamlit as st
+from streamlit_option_menu import option_menu
+import plotly.express as px
+import duckdb
 
-# Импортируем твоего агента
-from agent import MedicalSQLAgent # Новый (OpenRouter)
+from agent import OpenRouterSQLAgent # Новый сервис
 
 load_dotenv()
+
+def local_css():
+    st.markdown(
+        """
+        <style>
+        /* 1. Уменьшение основного текста (кегль) */
+        html, body, [class*="css"]  {
+            font-size: 14px; 
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }
+
+        /* 2. Уменьшение заголовков */
+        h1 { font-size: 24px !important; }
+        h2 { font-size: 20px !important; }
+        h3 { font-size: 18px !important; }
+
+        /* 3. Изменение отступов (Margins/Padding) у главного контейнера */
+        .block-container {
+            padding-top: 2rem !important; /* Отступ сверху */
+            padding-bottom: 2rem !important;
+            padding-left: 3rem !important;
+            padding-right: 3rem !important;
+            max-width: 95% !important; /* Ширина контента */
+        }
+
+        /* 4. Стилизация метрик (KPI) - добавляем границы и тень */
+        [data-testid="stMetric"] {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            padding: 10px;
+            border-radius: 5px; /* Закругление углов */
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); /* Легкая тень */
+        }
+        
+        /* Уменьшаем цифры в метриках */
+        [data-testid="stMetricValue"] {
+            font-size: 20px !important;
+        }
+
+        /* 5. Убираем лишние отступы между элементами */
+        .element-container {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* 6. Границы для вкладок (Tabs) */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 40px;
+            white-space: pre-wrap;
+            background-color: #f0f2f6;
+            border-radius: 4px 4px 0px 0px;
+            gap: 1px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #FFFFFF;
+            border-bottom: 2px solid #1f77b4;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 # --- КОНФИГУРАЦИЯ ---
 DB_PATH = "db/medinsight.duckdb"
 st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥")
+local_css()
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ДАННЫХ ---
 @st.cache_data
@@ -90,10 +157,23 @@ if df_gender is None:
     st.stop()
 
 # ВКЛАДКИ
-tab_dashboard, tab_agent = st.tabs(["📊 Аналитический Дашборд", "🤖 AI Агент"])
+with st.sidebar:
+    selected = option_menu(
+        menu_title="Меню",  # Название меню
+        options=["Дашборд", "AI Агент"],  # Пункты
+        icons=["bar-chart-fill", "chat-left-text-fill"],  # Иконки (Bootstrap icons)
+        menu_icon="cast",  # Иконка меню
+        default_index=0,  # выбрано по умолчанию
+        styles={
+            "container": {"padding": "5!important", "background-color": "#fafafa"},
+            "icon": {"color": "orange", "font-size": "15px"}, 
+            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px", "--hover-color": "#eee"},
+            "nav-link-selected": {"background-color": "#1f77b4"},
+        }
+    )
 # === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
-with tab_dashboard:
-    
+if selected == "Дашборд":
+    st.title("📊 Аналитический Дашборд")
     # ----------------------------------------
     # KPI
     # ----------------------------------------
@@ -121,7 +201,7 @@ with tab_dashboard:
             values="count",
             names="пол",
             title="Распределение по полу",
-            color_discrete_map={"М": "#1f77b4", "Ж": "#ff7f0e"},
+            color_discrete_map={"М": "#1f77b4", "Ж": "#f30f9b"},
             hole=0.4
         )
         fig_gender.update_traces(textinfo='percent', textfont_size=18)
@@ -151,7 +231,7 @@ with tab_dashboard:
         values='count',
         title='Распределение пациентов по районам',
         color='count',
-        color_continuous_scale='YlGnBu'
+        color_continuous_scale='cividis'
     )
 
     fig_tree.update_traces(
@@ -228,55 +308,161 @@ with tab_dashboard:
         title="Топ-20 классов заболеваний",
         labels={"cases": "Число обращений", "класс_заболевания": "Класс заболеваний"},
         color="cases",
-        color_continuous_scale="Blues"
+        color_continuous_scale="cividis"
     )
     st.plotly_chart(fig_top_classes, use_container_width=True)
 
     st.markdown("---")
 
     # --- 2. Частота заболеваний внутри выбранного класса ---
-    st.subheader("🧬 Частота заболеваний внутри класса")
+    st.markdown("### 🧬 Частота заболеваний внутри класса")
 
     classes_list = df_top_classes["класс_заболевания"].unique().tolist()
     selected_class = st.selectbox("Выберите класс заболевания:", classes_list)
 
+    # Получаем детальную статистику по всем заболеваниям в классе
     df_group_detail = con.execute(f"""
-        WITH diag_stat AS (
-            SELECT 
-                d.название_диагноза,
-                COUNT(*) AS cnt
-            FROM prescriptions p
-            JOIN diagnoses d ON p.код_диагноза = d.код_мкб
-            WHERE d.класс_заболевания = '{selected_class}'
-            GROUP BY d.название_диагноза
-        ),
-        top AS (
-            SELECT * FROM diag_stat
-            ORDER BY cnt DESC
-            LIMIT 12
-        ),
-        others AS (
-            SELECT 'Иные' AS название_диагноза, SUM(cnt) AS cnt
-            FROM diag_stat
-            WHERE название_диагноза NOT IN (SELECT название_диагноза FROM top)
-        )
-        SELECT * FROM top
-        UNION ALL
-        SELECT * FROM others
+        SELECT 
+            d.название_диагноза,
+            COUNT(*) AS cnt
+        FROM prescriptions p
+        JOIN diagnoses d ON p.код_диагноза = d.код_мкб
+        WHERE d.класс_заболевания = '{selected_class}'
+        GROUP BY d.название_диагноза
+        ORDER BY cnt DESC
     """).df()
 
+    # Рассчитываем долю каждого заболевания
+    total_cases = df_group_detail['cnt'].sum()
+    df_group_detail['доля'] = (df_group_detail['cnt'] / total_cases * 100).round(2)
+    df_group_detail['процент'] = df_group_detail['доля'].astype(str) + '%'
+
+    # Ограничиваем количество отображаемых заболеваний (топ-6 + остальные для компактности)
+    top_n = 6  # Уменьшили для компактной легенды
+    if len(df_group_detail) > top_n:
+        top_diseases = df_group_detail.head(top_n).copy()
+        other_cases = df_group_detail.iloc[top_n:]['cnt'].sum()
+        other_share = (other_cases / total_cases * 100).round(2)
+        
+        # Создаем строку для "Остальных"
+        other_row = pd.DataFrame({
+            'название_диагноза': [f'Остальные ({len(df_group_detail) - top_n} диагнозов)'],
+            'cnt': [other_cases],
+            'доля': [other_share],
+            'процент': [f'{other_share}%']
+        })
+        
+        df_plot = pd.concat([top_diseases, other_row], ignore_index=True)
+    else:
+        df_plot = df_group_detail.copy()
+
+    # Сортируем по убыванию для лучшей читаемости
+    df_plot = df_plot.sort_values('доля', ascending=True)
+
+    # Создаем stacked bar chart
     fig_group_details = px.bar(
-        df_group_detail,
-        x="название_диагноза",
-        y="cnt",
+        df_plot,
+        x='доля',
+        y=pd.Series([selected_class] * len(df_plot)),  # Все столбцы будут в одной строке
+        orientation='h',
+        color='название_диагноза',
         title=f"Структура диагнозов в классе: {selected_class}",
-        labels={"cnt": "Количество случаев", "название_диагноза": "Диагноз"},
-        color="название_диагноза",
-        opacity=0.8
+        labels={
+            'доля': 'Доля от всех случаев в классе (%)',
+            'y': '',
+            'название_диагноза': 'Конкретный диагноз'
+        },
+        text='процент',
+        color_discrete_sequence=px.colors.qualitative.Set3
     )
-    
-    fig_group_details.update_layout(xaxis_tickangle=-45)
+
+    # НАСТРОЙКА ЛЕГЕНДЫ - КАЖДЫЙ ЭЛЕМЕНТ В НОВОЙ СТРОКЕ
+    fig_group_details.update_layout(
+        showlegend=True,
+        legend_title=dict(
+            text="<b>Диагнозы:</b>",
+            font=dict(size=12)
+        ),
+        # ВЕРТИКАЛЬНАЯ ЛЕГЕНДА С ОДНИМ ЭЛЕМЕНТОМ В СТРОКЕ
+        legend=dict(
+            orientation="v",  # Вертикальная ориентация
+            yanchor="top",
+            y=-0.45,  # Размещаем ниже графика
+            xanchor="center",
+            x=0.5,    # Центрируем по горизонтали
+            font=dict(size=11),
+            itemwidth=30,
+            itemsizing="constant",
+            # НАСТРОЙКИ ДЛЯ ОДНОГО ЭЛЕМЕНТА В СТРОКУ
+            traceorder="normal",
+            itemclick="toggleothers",
+            itemdoubleclick="toggle",
+            # Группируем элементы в столбцы (если нужно)
+            groupclick="toggleitem",
+            # Отступы между элементами
+            borderwidth=1,
+            bordercolor="LightGray",
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            # Фиксируем размеры для читаемости
+            entrywidth=200,  # Ширина каждой записи
+            entrywidthmode="pixels"
+        ),
+        # Увеличиваем отступ снизу для легенды
+        margin=dict(l=10, r=10, t=50, b=180),  # Увеличили bottom
+        height=500,
+        bargap=0.5,
+        yaxis=dict(
+            showticklabels=False,
+            title_text=""
+        ),
+        xaxis=dict(
+            range=[0, 100],
+            title_text="Доля случаев (%)",
+            ticksuffix="%"
+        ),
+        title=dict(
+            y=0.95,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        )
+    )
+
+    # Настраиваем подписи на столбцах
+    fig_group_details.update_traces(
+        textposition='inside',
+        insidetextanchor='middle',
+        textfont=dict(size=10, color='black', family="Arial"),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>" +
+            "Доля: %{customdata[1]:.1f}%<br>" +
+            "Количество: %{customdata[2]:,} случаев<br>" +
+            "<extra></extra>"
+        )
+    )
+
+    # Добавляем абсолютные числа в кастомные данные для тултипа
+    fig_group_details.data[0].customdata = list(zip(
+        df_plot['название_диагноза'],
+        df_plot['доля'],
+        df_plot['cnt']
+    ))
+
+    # Дополнительная информация под графиком
     st.plotly_chart(fig_group_details, use_container_width=True)
+    
+    # Информационная панель под графиком
+    with st.expander("📊 Детальная информация о классе заболеваний", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Всего диагнозов в классе", len(df_group_detail))
+        with col2:
+            st.metric("Всего случаев", f"{total_cases:,}")
+        with col3:
+            most_common = df_group_detail.iloc[0]
+            st.metric("Самый частый диагноз", 
+                     f"{most_common['название_диагноза'][:30]}...", 
+                     f"{most_common['доля']}%")
 
     st.markdown("---")
 
@@ -303,7 +489,7 @@ with tab_dashboard:
         title="Разница количества пациентов (Ж − М)",
         labels={"разница": "Разница (Ж − М)", "короткое_название": "Группа заболеваний"},
         color="разница",
-        color_continuous_scale="OrRd"
+        color_continuous_scale="cividis"
     )
 
     st.plotly_chart(fig_gender_diff, use_container_width=True)
@@ -332,7 +518,7 @@ with tab_dashboard:
         title="Топ-10 заболеваний по стоимости лечения пациента",
         labels={"стоимость": "Стоимость на пациента", "короткое": "Группа заболеваний"},
         color="стоимость",
-        color_continuous_scale="Blues"
+        color_continuous_scale="cividis"
     )
 
     st.plotly_chart(fig_cost_top10, use_container_width=True)
