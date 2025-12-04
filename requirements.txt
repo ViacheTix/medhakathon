@@ -18,6 +18,7 @@ matplotlib
 seaborn>=0.12.2
 folium
 streamlit-folium
+streamlit-option-menu
 
 # Environment & Utils
 python-dotenv
