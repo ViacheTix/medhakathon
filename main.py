@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import streamlit as st
+from streamlit_option_menu import option_menu
 import plotly.express as px
 import duckdb
 
@@ -90,10 +91,23 @@ if df_gender is None:
     st.stop()
 
 # ВКЛАДКИ
-tab_dashboard, tab_agent = st.tabs(["📊 Аналитический Дашборд", "🤖 AI Агент"])
+with st.sidebar:
+    selected = option_menu(
+        menu_title="Меню",  # Название меню
+        options=["Дашборд", "AI Агент"],  # Пункты
+        icons=["bar-chart-fill", "robot"],  # Иконки (Bootstrap icons)
+        menu_icon="cast",  # Иконка меню
+        default_index=0,  # Что выбрано по умолчанию
+        styles={
+            "container": {"padding": "5!important", "background-color": "#fafafa"},
+            "icon": {"color": "orange", "font-size": "25px"}, 
+            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px", "--hover-color": "#eee"},
+            "nav-link-selected": {"background-color": "#1f77b4"},
+        }
+    )
 # === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
-with tab_dashboard:
-    
+if selected == "Дашборд":
+    st.title("📊 Аналитический Дашборд")
     # ----------------------------------------
     # KPI
     # ----------------------------------------
@@ -342,8 +356,10 @@ with tab_dashboard:
 
 
 # === ВКЛАДКА 2: АГЕНТ (ОБНОВЛЕННАЯ ЛОГИКА) ===
-with tab_agent:
-    st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
+elif selected == "AI Агент":
+    st.title("Чат с SQL-агентом")
+
+    # st.header("Чат с SQL-агентом (Powered by Llama 3.3)")
     
     # 1. Проверка ключа OpenRouter
     api_key = os.getenv("OPENROUTER_API_KEY")
