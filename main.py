@@ -257,6 +257,10 @@ if selected == "Дашборд":
         title_font_size=22
     )
 
+    st.plotly_chart(fig_tree, use_container_width=True)
+
+    st.divider()
+
     # Статистика заболеваний (Твой блок)
     st.subheader("📈 Статистика заболеваний")
     con = duckdb.connect(DB_PATH, read_only=True)
