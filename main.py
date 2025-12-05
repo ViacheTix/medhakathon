@@ -6,11 +6,34 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import plotly.express as px
 import duckdb
+import uuid
 
 from agent import OpenRouterSQLAgent # Новый сервис
 
 load_dotenv()
+def create_new_chat():
+    new_id = str(uuid.uuid4())[:8]
+    st.session_state.chat_histories[new_id] = {
+        "name": f"Чат {len(st.session_state.chat_histories) + 1}",
+        "messages": [
+            {"role": "assistant", "content": "Новый чат открыт. Чем могу помочь?"}
+        ]
+    }
+    st.session_state.current_chat_id = new_id
 
+def delete_chat(chat_id):
+    if chat_id in st.session_state.chat_histories:
+        del st.session_state.chat_histories[chat_id]
+
+    if st.session_state.current_chat_id == chat_id:
+        if st.session_state.chat_histories:
+            st.session_state.current_chat_id = next(iter(st.session_state.chat_histories))
+        else:
+            create_new_chat()
+
+def switch_chat(chat_id):
+    st.session_state.current_chat_id = chat_id
+    
 def local_css():
     st.markdown(
         """
@@ -143,6 +166,12 @@ def load_dashboard_data():
     con.close()
     return df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season
 
+# --- ИНИЦИАЛИЗАЦИЯ ХРАНИЛИЩА ЧАТОВ ---
+if "chat_histories" not in st.session_state:
+    st.session_state.chat_histories = {}  # id → список сообщений
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = None
+
 # --- ИНТЕРФЕЙС ---
 
 st.title("🏥 Medical Insight: Центр Аналитики")
@@ -159,11 +188,11 @@ if df_gender is None:
 # ВКЛАДКИ
 with st.sidebar:
     selected = option_menu(
-        menu_title="Меню",  # Название меню
-        options=["Дашборд", "AI Агент"],  # Пункты
-        icons=["bar-chart-fill", "chat-left-text-fill"],  # Иконки (Bootstrap icons)
-        menu_icon="cast",  # Иконка меню
-        default_index=0,  # выбрано по умолчанию
+        menu_title="Меню",
+        options=["Дашборд", "AI Агент"],
+        icons=["bar-chart-fill", "chat-left-text-fill"],
+        menu_icon="cast",
+        default_index=0,
         styles={
             "container": {"padding": "5!important", "background-color": "#fafafa"},
             "icon": {"color": "orange", "font-size": "15px"}, 
@@ -171,6 +200,36 @@ with st.sidebar:
             "nav-link-selected": {"background-color": "#1f77b4"},
         }
     )
+
+with st.sidebar:
+    st.subheader("Чаты")
+
+    for cid in list(st.session_state.chat_histories.keys()):
+        chat_data = st.session_state.chat_histories[cid]
+
+        col1, col2 = st.columns([4, 1])
+
+        with col1:
+            if st.button(chat_data["name"], key=f"open_{cid}"):
+                st.session_state.current_chat_id = cid
+
+        with col2:
+            if st.button("✖", key=f"del_{cid}"):
+                delete_chat(cid)
+                st.rerun()
+
+    if st.button("➕ Новый чат"):
+        create_new_chat()
+        st.rerun()
+
+# Если нет активного чата — создаем
+if st.session_state.current_chat_id is None:
+    create_new_chat()
+
+# Получаем текущую переписку
+chat_id = st.session_state.current_chat_id
+messages = st.session_state.chat_histories[chat_id]["messages"]
+
 # === ВКЛАДКА 1: ВИЗУАЛИЗАЦИЯ ===
 if selected == "Дашборд":
     st.title("📊 Аналитический Дашборд")
@@ -315,48 +374,154 @@ if selected == "Дашборд":
     st.markdown("---")
 
     # --- 2. Частота заболеваний внутри выбранного класса ---
-    st.subheader("🧬 Частота заболеваний внутри класса")
+    st.markdown("### 🧬 Частота заболеваний внутри класса")
 
     classes_list = df_top_classes["класс_заболевания"].unique().tolist()
     selected_class = st.selectbox("Выберите класс заболевания:", classes_list)
 
+    # Получаем детальную статистику по всем заболеваниям в классе
     df_group_detail = con.execute(f"""
-        WITH diag_stat AS (
-            SELECT 
-                d.название_диагноза,
-                COUNT(*) AS cnt
-            FROM prescriptions p
-            JOIN diagnoses d ON p.код_диагноза = d.код_мкб
-            WHERE d.класс_заболевания = '{selected_class}'
-            GROUP BY d.название_диагноза
-        ),
-        top AS (
-            SELECT * FROM diag_stat
-            ORDER BY cnt DESC
-            LIMIT 12
-        ),
-        others AS (
-            SELECT 'Иные' AS название_диагноза, SUM(cnt) AS cnt
-            FROM diag_stat
-            WHERE название_диагноза NOT IN (SELECT название_диагноза FROM top)
-        )
-        SELECT * FROM top
-        UNION ALL
-        SELECT * FROM others
+        SELECT 
+            d.название_диагноза,
+            COUNT(*) AS cnt
+        FROM prescriptions p
+        JOIN diagnoses d ON p.код_диагноза = d.код_мкб
+        WHERE d.класс_заболевания = '{selected_class}'
+        GROUP BY d.название_диагноза
+        ORDER BY cnt DESC
     """).df()
 
+    # Рассчитываем долю каждого заболевания
+    total_cases = df_group_detail['cnt'].sum()
+    df_group_detail['доля'] = (df_group_detail['cnt'] / total_cases * 100).round(2)
+    df_group_detail['процент'] = df_group_detail['доля'].astype(str) + '%'
+
+    # Ограничиваем количество отображаемых заболеваний (топ-6 + остальные для компактности)
+    top_n = 6  # Уменьшили для компактной легенды
+    if len(df_group_detail) > top_n:
+        top_diseases = df_group_detail.head(top_n).copy()
+        other_cases = df_group_detail.iloc[top_n:]['cnt'].sum()
+        other_share = (other_cases / total_cases * 100).round(2)
+        
+        # Создаем строку для "Остальных"
+        other_row = pd.DataFrame({
+            'название_диагноза': [f'Остальные ({len(df_group_detail) - top_n} диагнозов)'],
+            'cnt': [other_cases],
+            'доля': [other_share],
+            'процент': [f'{other_share}%']
+        })
+        
+        df_plot = pd.concat([top_diseases, other_row], ignore_index=True)
+    else:
+        df_plot = df_group_detail.copy()
+
+    # Сортируем по убыванию для лучшей читаемости
+    df_plot = df_plot.sort_values('доля', ascending=True)
+
+    # Создаем stacked bar chart
     fig_group_details = px.bar(
-        df_group_detail,
-        x="название_диагноза",
-        y="cnt",
+        df_plot,
+        x='доля',
+        y=pd.Series([selected_class] * len(df_plot)),  # Все столбцы будут в одной строке
+        orientation='h',
+        color='название_диагноза',
         title=f"Структура диагнозов в классе: {selected_class}",
-        labels={"cnt": "Количество случаев", "название_диагноза": "Диагноз"},
-        color="название_диагноза",
-        opacity=0.8
+        labels={
+            'доля': 'Доля от всех случаев в классе (%)',
+            'y': '',
+            'название_диагноза': 'Конкретный диагноз'
+        },
+        text='процент',
+        color_discrete_sequence=px.colors.qualitative.Set3
     )
-    
-    fig_group_details.update_layout(xaxis_tickangle=-45)
+
+    # НАСТРОЙКА ЛЕГЕНДЫ - КАЖДЫЙ ЭЛЕМЕНТ В НОВОЙ СТРОКЕ
+    fig_group_details.update_layout(
+        showlegend=True,
+        legend_title=dict(
+            text="<b>Диагнозы:</b>",
+            font=dict(size=12)
+        ),
+        # ВЕРТИКАЛЬНАЯ ЛЕГЕНДА С ОДНИМ ЭЛЕМЕНТОМ В СТРОКЕ
+        legend=dict(
+            orientation="v",  # Вертикальная ориентация
+            yanchor="top",
+            y=-0.45,  # Размещаем ниже графика
+            xanchor="center",
+            x=0.5,    # Центрируем по горизонтали
+            font=dict(size=11),
+            itemwidth=30,
+            itemsizing="constant",
+            # НАСТРОЙКИ ДЛЯ ОДНОГО ЭЛЕМЕНТА В СТРОКУ
+            traceorder="normal",
+            itemclick="toggleothers",
+            itemdoubleclick="toggle",
+            # Группируем элементы в столбцы (если нужно)
+            groupclick="toggleitem",
+            # Отступы между элементами
+            borderwidth=1,
+            bordercolor="LightGray",
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            # Фиксируем размеры для читаемости
+            entrywidth=200,  # Ширина каждой записи
+            entrywidthmode="pixels"
+        ),
+        # Увеличиваем отступ снизу для легенды
+        margin=dict(l=10, r=10, t=50, b=180),  # Увеличили bottom
+        height=500,
+        bargap=0.5,
+        yaxis=dict(
+            showticklabels=False,
+            title_text=""
+        ),
+        xaxis=dict(
+            range=[0, 100],
+            title_text="Доля случаев (%)",
+            ticksuffix="%"
+        ),
+        title=dict(
+            y=0.95,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        )
+    )
+
+    # Настраиваем подписи на столбцах
+    fig_group_details.update_traces(
+        textposition='inside',
+        insidetextanchor='middle',
+        textfont=dict(size=10, color='black', family="Arial"),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>" +
+            "Доля: %{customdata[1]:.1f}%<br>" +
+            "Количество: %{customdata[2]:,} случаев<br>" +
+            "<extra></extra>"
+        )
+    )
+
+    # Добавляем абсолютные числа в кастомные данные для тултипа
+    fig_group_details.data[0].customdata = list(zip(
+        df_plot['название_диагноза'],
+        df_plot['доля'],
+        df_plot['cnt']
+    ))
+
+    # Дополнительная информация под графиком
     st.plotly_chart(fig_group_details, use_container_width=True)
+    
+    # Информационная панель под графиком
+    with st.expander("📊 Детальная информация о классе заболеваний", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Всего диагнозов в классе", len(df_group_detail))
+        with col2:
+            st.metric("Всего случаев", f"{total_cases:,}")
+        with col3:
+            most_common = df_group_detail.iloc[0]
+            st.metric("Самый частый диагноз", 
+                     f"{most_common['название_диагноза'][:30]}...", 
+                     f"{most_common['доля']}%")
 
     st.markdown("---")
 
@@ -438,33 +603,26 @@ elif selected == "AI Агент":
         st.stop()
 
     # 2. История сообщений
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Я подключен к базе данных через OpenRouter. Могу анализировать сложные запросы. О чем вам рассказать?"}
-        ]
-
-    for msg in st.session_state.messages:
+    for msg in messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     # 3. Обработка вопроса
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
-        # Сохраняем вопрос пользователя
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.chat_histories[chat_id]["messages"].append({"role": "user", "content": prompt})
+
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Генерируем ответ
         with st.chat_message("assistant"):
             try:
-                # Инициализируем агента OpenRouter
                 agent = OpenRouterSQLAgent(api_key)
-                
-                with st.spinner("🤖 Llama 3.3 думает и пишет SQL..."):
-                    final_response = agent.answer(prompt)
-                
-                st.markdown(final_response)
-                st.session_state.messages.append({"role": "assistant", "content": final_response})
-                
+                with st.spinner("🤖 Думаю..."):
+                    answer = agent.answer(prompt)
+
+                st.markdown(answer)
+                st.session_state.chat_histories[chat_id]["messages"].append({"role": "assistant", "content": answer})
+
             except Exception as e:
                 st.error(f"Произошла ошибка: {e}")
+                st.session_state.chat_histories[chat_id]["messages"].append({"role": "assistant", "content": f"Ошибка: {e}"})
