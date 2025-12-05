@@ -1,30 +1,11 @@
-WITH district_patients AS (
-  SELECT 
-    p.район_проживания,
-    COUNT(DISTINCT p.id_пациента) AS total_patients,
-    SUM(CASE WHEN d.класс_заболевания ILIKE '%Болезни системы кровообращения%' THEN 1 ELSE 0 END) AS circulatory_patients
-  FROM 
-    patients p
-  JOIN 
-    prescriptions pr ON p.id_пациента = pr.id_пациента
-  JOIN 
-    diagnoses d ON pr.код_диагноза = d.код_мкб
-  GROUP BY 
-    p.район_проживания
-),
-avg_circulatory_rate AS (
-  SELECT 
-    SUM(circulatory_patients) / SUM(total_patients) AS avg_rate
-  FROM 
-    district_patients
+SELECT p.id_пациента, d.торговое_название
+FROM prescriptions pr
+JOIN drugs d ON pr.код_препарата = d.код_препарата
+JOIN patients p ON pr.id_пациента = p.id_пациента
+WHERE (pr.id_пациента, DATE(pr.дата_рецепта)) IN (
+  SELECT id_пациента, DATE(дата_рецепта)
+  FROM prescriptions
+  GROUP BY id_пациента, DATE(дата_рецепта)
+  HAVING COUNT(DISTINCT код_препарата) >= 3
 )
-SELECT 
-  район_проживания,
-  (circulatory_patients * 1.0 / total_patients) AS circulatory_rate
-FROM 
-  district_patients
-WHERE 
-  (circulatory_patients * 1.0 / total_patients) > (SELECT avg_rate FROM avg_circulatory_rate)
-ORDER BY 
-  circulatory_rate DESC
-LIMIT 3;
+LIMIT 1;

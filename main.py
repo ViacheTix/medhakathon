@@ -12,8 +12,70 @@ from agent import OpenRouterSQLAgent
 load_dotenv()
 
 # ==========================================
-# 🎨 CSS СТИЛИЗАЦИЯ
+# 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Кэш и Визуал)
 # ==========================================
+
+# 1. Кэширование агента (ВАЖНО для скорости)
+@st.cache_resource
+def get_agent(api_key_val):
+    return OpenRouterSQLAgent(api_key_val)
+
+# 2. Функция Авто-визуализации
+def auto_visualize_data(df: pd.DataFrame):
+    """Автоматически строит график по DataFrame"""
+    if df is None or df.empty or len(df.columns) < 2: return None
+    
+    # Определяем типы колонок
+    num_cols = df.select_dtypes(include=['number']).columns.tolist()
+    cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
+    date_cols = [col for col in df.columns if any(x in col.lower() for x in ['date', 'time', 'year', 'month', 'day', 'дата', 'год', 'месяц'])]
+    
+    fig = None
+    try:
+        # Линейный график (Временной ряд)
+        if len(date_cols) > 0 and len(num_cols) > 0:
+            x_col = date_cols[0]; y_col = num_cols[0]
+            df = df.sort_values(by=x_col)
+            fig = px.line(df, x=x_col, y=y_col, markers=True, title=f"Динамика: {y_col}", template="plotly_white")
+        
+        # Бар-чарт или Пай-чарт (Категории)
+        elif len(cat_cols) > 0 and len(num_cols) > 0:
+            x_col = cat_cols[0]; y_col = num_cols[0]
+            # Если мало категорий и это похоже на доли -> Pie Chart
+            if len(df) <= 6 and any(x in y_col.lower() for x in ['share', 'доля', 'процент']): 
+                fig = px.pie(df, names=x_col, values=y_col, title=f"Распределение: {x_col}")
+            else:
+                fig = px.bar(df, x=x_col, y=y_col, title=f"{y_col} по {x_col}", color=y_col, template="plotly_white", color_continuous_scale="Blues")
+    except Exception:
+        return None
+        
+    return fig
+
+# 3. Управление чатами
+def create_new_chat():
+    new_id = str(uuid.uuid4())[:8]
+    st.session_state.chat_histories[new_id] = {
+        "name": f"Чат {len(st.session_state.chat_histories) + 1}",
+        "messages": [
+            {"role": "assistant", "content": "Новый чат открыт. Чем могу помочь?"}
+        ]
+    }
+    st.session_state.current_chat_id = new_id
+
+def delete_chat(chat_id):
+    if chat_id in st.session_state.chat_histories:
+        del st.session_state.chat_histories[chat_id]
+
+    if st.session_state.current_chat_id == chat_id:
+        if st.session_state.chat_histories:
+            st.session_state.current_chat_id = next(iter(st.session_state.chat_histories))
+        else:
+            create_new_chat()
+
+def switch_chat(chat_id):
+    st.session_state.current_chat_id = chat_id
+
+# 4. CSS Стили
 def local_css():
     st.markdown(
         """
@@ -24,6 +86,7 @@ def local_css():
         .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; padding-left: 3rem !important; padding-right: 3rem !important; max-width: 95% !important; }
         [data-testid="stMetric"] { background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 10px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         [data-testid="stMetricValue"] { font-size: 20px !important; }
+        .element-container { margin-bottom: 0.5rem !important; }
         .stButton button { text_align: left !important; }
         </style>
         """,
@@ -35,225 +98,203 @@ DB_PATH = "db/medinsight.duckdb"
 st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥")
 local_css()
 
-# ==========================================
-# 🚀 КЭШИРОВАНИЕ АГЕНТА
-# ==========================================
-@st.cache_resource
-def get_agent(api_key_val):
-    return OpenRouterSQLAgent(api_key_val)
-
-# ==========================================
-# 📊 ФУНКЦИЯ АВТО-ВИЗУАЛИЗАЦИИ
-# ==========================================
-def auto_visualize_data(df: pd.DataFrame):
-    if df is None or df.empty or len(df.columns) < 2: return None
-    num_cols = df.select_dtypes(include=['number']).columns.tolist()
-    cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
-    date_cols = [col for col in df.columns if any(x in col.lower() for x in ['date', 'time', 'year', 'month', 'day', 'дата', 'год', 'месяц'])]
-    fig = None
-    
-    try:
-        if len(date_cols) > 0 and len(num_cols) > 0:
-            x_col = date_cols[0]; y_col = num_cols[0]
-            df = df.sort_values(by=x_col)
-            fig = px.line(df, x=x_col, y=y_col, markers=True, title=f"Динамика: {y_col}", template="plotly_white")
-        elif len(cat_cols) > 0 and len(num_cols) > 0:
-            x_col = cat_cols[0]; y_col = num_cols[0]
-            if len(df) <= 6 and any(x in y_col.lower() for x in ['share', 'доля', 'процент']): 
-                fig = px.pie(df, names=x_col, values=y_col, title=f"Распределение: {x_col}")
-            else:
-                fig = px.bar(df, x=x_col, y=y_col, title=f"{y_col} по {x_col}", color=y_col, template="plotly_white", color_continuous_scale="Blues")
-    except Exception:
-        return None
-        
-    return fig
-
-# ==========================================
-# 📂 УПРАВЛЕНИЕ ЧАТАМИ
-# ==========================================
-def init_chat_state():
-    if "chats" not in st.session_state:
-        new_id = str(uuid.uuid4())
-        st.session_state.chats = {new_id: {"title": "Новый чат", "messages": []}}
-        st.session_state.current_chat_id = new_id
-
-def create_new_chat():
-    new_id = str(uuid.uuid4())
-    st.session_state.chats[new_id] = {"title": "Новый чат", "messages": []}
-    st.session_state.current_chat_id = new_id
-
-def delete_chat(chat_id):
-    if len(st.session_state.chats) > 1:
-        del st.session_state.chats[chat_id]
-        # Если удалили текущий, переключаемся на другой
-        if chat_id == st.session_state.current_chat_id:
-            st.session_state.current_chat_id = list(st.session_state.chats.keys())[0]
-
-# --- ЗАГРУЗКА ДАННЫХ ДЛЯ ДАШБОРДА ---
+# --- ЗАГРУЗКА ДАННЫХ ---
 @st.cache_data
 def load_dashboard_data():
-    if not os.path.exists(DB_PATH): return None, None, None, None, None, None
+    if not os.path.exists(DB_PATH):
+        return None, None, None, None, None, None
+
     con = duckdb.connect(DB_PATH, read_only=True)
-    try:
-        df_gender = con.execute("SELECT пол, COUNT(*) as count FROM patients GROUP BY пол").df()
-        df_age = con.execute("SELECT date_diff('year', дата_рождения, CURRENT_DATE) as age FROM patients WHERE дата_рождения IS NOT NULL").df()
-        df_district = con.execute("SELECT район_проживания, COUNT(*) as count FROM patients WHERE район_проживания IS NOT NULL GROUP BY район_проживания ORDER BY count DESC").df()
-        df_finance = con.execute("SELECT disease_group, avg_cost_per_prescription, avg_cost_per_patient FROM insight_cost_by_disease ORDER BY avg_cost_per_patient DESC LIMIT 10").df()
-        df_geo = con.execute("SELECT region, SUM(prescriptions_count) as total_prescriptions FROM insight_region_drug_choice GROUP BY region ORDER BY total_prescriptions DESC").df()
-        df_season = con.execute("SELECT strftime(дата_рецепта, '%Y-%m') as month_year, COUNT(*) as cases FROM prescriptions GROUP BY month_year ORDER BY month_year").df()
-        return df_gender, df_age, df_district, df_finance, df_geo, df_season
-    except Exception: return None, None, None, None, None, None
-    finally: con.close()
+    
+    # Запросы к БД (как в твоем коде)
+    df_gender = con.execute("SELECT пол, COUNT(*) as count FROM patients GROUP BY пол").df()
+    df_age = con.execute("SELECT date_diff('year', дата_рождения, CURRENT_DATE) as age FROM patients WHERE дата_рождения IS NOT NULL").df()
+    df_district_patients = con.execute("SELECT район_проживания, COUNT(*) as count FROM patients WHERE район_проживания IS NOT NULL GROUP BY район_проживания ORDER BY count DESC").df()
+    df_finance = con.execute("SELECT disease_group, avg_cost_per_prescription, avg_cost_per_patient FROM insight_cost_by_disease ORDER BY avg_cost_per_patient DESC LIMIT 10").df()
+    df_geo_drugs = con.execute("SELECT region, SUM(prescriptions_count) as total_prescriptions FROM insight_region_drug_choice GROUP BY region ORDER BY total_prescriptions DESC").df()
+    df_season = con.execute("SELECT strftime(дата_рецепта, '%Y-%m') as month_year, COUNT(*) as cases FROM prescriptions GROUP BY month_year ORDER BY month_year").df()
 
-init_chat_state()
+    con.close()
+    return df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season
 
+# --- ИНИЦИАЛИЗАЦИЯ СОСТОЯНИЯ ---
+if "chat_histories" not in st.session_state:
+    st.session_state.chat_histories = {} 
+if "current_chat_id" not in st.session_state:
+    st.session_state.current_chat_id = None
+
+# --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
+
+# Загрузка
+data = load_dashboard_data()
+df_gender, df_age, df_district_patients, df_finance, df_geo_drugs, df_season = data
+
+if df_gender is None:
+    st.error(f"❌ База данных не найдена по пути: {DB_PATH}.")
+    st.stop()
+
+# САЙДБАР
 with st.sidebar:
-    selected = option_menu("Меню", ["Дашборд", "AI Агент"], icons=["bar-chart-fill", "chat-left-text-fill"], menu_icon="cast", default_index=0, styles={"container": {"padding": "5!important", "background-color": "#fafafa"}, "nav-link-selected": {"background-color": "#1f77b4"}})
+    selected = option_menu(
+        menu_title="Меню",
+        options=["Дашборд", "AI Агент"],
+        icons=["bar-chart-fill", "chat-left-text-fill"],
+        menu_icon="cast",
+        default_index=0,
+        styles={
+            "container": {"padding": "5!important", "background-color": "#fafafa"},
+            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px", "--hover-color": "#eee"},
+            "nav-link-selected": {"background-color": "#1f77b4"},
+        }
+    )
 
-# ==========================================
-# 📊 ВКЛАДКА 1: ДАШБОРД
-# ==========================================
+    # Управление чатами (только если выбран агент)
+    if selected == "AI Агент":
+        st.divider()
+        st.subheader("🗂 Чаты")
+        
+        # Если нет активного чата — создаем
+        if st.session_state.current_chat_id is None:
+            create_new_chat()
+            
+        # Список чатов
+        for cid in list(st.session_state.chat_histories.keys()):
+            chat_data = st.session_state.chat_histories[cid]
+            is_active = (cid == st.session_state.current_chat_id)
+            
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                label = f"**{chat_data['name']}**" if is_active else chat_data['name']
+                if st.button(label, key=f"open_{cid}", use_container_width=True):
+                    switch_chat(cid)
+                    st.rerun()
+            with col2:
+                if st.button("✕", key=f"del_{cid}"):
+                    delete_chat(cid)
+                    st.rerun()
+
+        if st.button("➕ Новый чат", use_container_width=True):
+            create_new_chat()
+            st.rerun()
+
+
+# === ВКЛАДКА 1: ДАШБОРД ===
 if selected == "Дашборд":
     st.title("📊 Аналитический Дашборд")
-    data = load_dashboard_data()
-    df_gender, df_age, df_district, df_finance, df_geo, df_season = data
-
-    if df_gender is None:
-        st.error("❌ Не удалось загрузить данные.")
-        st.stop()
-
+    
+    # KPI
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Всего пациентов", f"{df_gender['count'].sum():,.0f}")
     col2.metric("Средний возраст", f"{df_age['age'].mean():.1f} лет")
-    col3.metric("Топ район", df_district.iloc[0]['район_проживания'])
+    col3.metric("Самый населенный район", df_district_patients.iloc[0]['район_проживания'])
     col4.metric("Всего рецептов", f"{df_season['cases'].sum():,.0f}")
     st.divider()
 
+    # Графики демографии
     c1, c2 = st.columns([1, 2])
-    with c1: st.plotly_chart(px.pie(df_gender, values="count", names="пол", title="Пол", color_discrete_map={"М": "#1f77b4", "Ж": "#ff7f0e"}, hole=0.4), use_container_width=True)
-    with c2: st.plotly_chart(px.histogram(df_age, x="age", nbins=30, title="Возраст", color_discrete_sequence=['#00CC96']), use_container_width=True)
-    
-    st.plotly_chart(px.treemap(df_district, path=['район_проживания'], values='count', title='Районы'), use_container_width=True)
-    st.plotly_chart(px.area(df_season, x="month_year", y="cases", title="Динамика рецептов"), use_container_width=True)
+    with c1: st.plotly_chart(px.pie(df_gender, values="count", names="пол", title="Распределение по полу", color_discrete_map={"М": "#1f77b4", "Ж": "#f30f9b"}, hole=0.4), use_container_width=True)
+    with c2: st.plotly_chart(px.histogram(df_age, x="age", nbins=30, title="Возрастная структура", color_discrete_sequence=['#00CC96']), use_container_width=True)
 
+    st.plotly_chart(px.treemap(df_district_patients, path=['район_проживания'], values='count', title='География пациентов'), use_container_width=True)
+    st.plotly_chart(px.area(df_season, x="month_year", y="cases", title="Динамика обращений"), use_container_width=True)
+
+    # Статистика заболеваний (Твой блок)
     st.subheader("📈 Статистика заболеваний")
     con = duckdb.connect(DB_PATH, read_only=True)
-    df_top = con.execute("SELECT класс_заболевания, COUNT(*) AS cases FROM prescriptions p JOIN diagnoses d ON p.код_диагноза = d.код_мкб GROUP BY класс_заболевания ORDER BY cases DESC LIMIT 20").df()
-    st.plotly_chart(px.bar(df_top, x="cases", y="класс_заболевания", orientation='h', title="Топ-20 классов", color="cases"), use_container_width=True)
+    
+    # Топ-20
+    df_top_classes = con.execute("SELECT класс_заболевания, COUNT(*) AS cases FROM prescriptions p JOIN diagnoses d ON p.код_диагноза = d.код_мкб GROUP BY класс_заболевания ORDER BY cases DESC LIMIT 20").df()
+    st.plotly_chart(px.bar(df_top_classes, x="cases", y="класс_заболевания", orientation='h', title="Топ-20 классов заболеваний", color="cases"), use_container_width=True)
+    st.markdown("---")
+    
+    # Детализация класса
+    st.markdown("### 🧬 Частота заболеваний внутри класса")
+    classes_list = df_top_classes["класс_заболевания"].unique().tolist()
+    selected_class = st.selectbox("Выберите класс заболевания:", classes_list)
+    
+    df_group_detail = con.execute(f"SELECT d.название_диагноза, COUNT(*) AS cnt FROM prescriptions p JOIN diagnoses d ON p.код_диагноза = d.код_мкб WHERE d.класс_заболевания = '{selected_class}' GROUP BY d.название_диагноза ORDER BY cnt DESC LIMIT 10").df()
+    fig_group = px.bar(df_group_detail, x='cnt', y='название_диагноза', orientation='h', title=f"Топ диагнозов: {selected_class}", color='cnt')
+    st.plotly_chart(fig_group, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Финансы
+    st.subheader("💰 Топ-10 заболеваний по стоимости лечения")
+    st.plotly_chart(px.bar(df_finance, x="avg_cost_per_patient", y="disease_group", orientation="h", title="Средний чек на пациента", color="avg_cost_per_patient"), use_container_width=True)
     con.close()
 
-# ==========================================
-# 🤖 ВКЛАДКА 2: AI АГЕНТ (ИСПРАВЛЕННАЯ)
-# ==========================================
+
+# === ВКЛАДКА 2: AI АГЕНТ (ИСПРАВЛЕННАЯ) ===
 elif selected == "AI Агент":
     st.title("🤖 Чат с SQL-агентом")
 
+    # 1. API KEY
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         api_key = st.text_input("Введите ключ OpenRouter:", type="password")
-        if not api_key:
-            st.warning("Требуется ключ API.")
-            st.stop()
+        if not api_key: st.stop()
 
-    # --- САЙДБАР ЧАТОВ ---
-    with st.sidebar:
-        st.markdown("---")
-        st.subheader("🗂 История диалогов")
-        if st.button("➕ Новый диалог", use_container_width=True):
-            create_new_chat()
-            st.rerun()
-        
-        chat_ids = list(st.session_state.chats.keys())
-        # Используем reversed, чтобы новые чаты были сверху
-        for c_id in reversed(chat_ids):
-            chat = st.session_state.chats[c_id]
-            col_btn, col_del = st.columns([5, 1])
-            is_active = (c_id == st.session_state.current_chat_id)
-            
-            # Стиль кнопки (жирный шрифт если активна)
-            label = f"📂 **{chat['title']}**" if is_active else f"📁 {chat['title']}"
-            
-            if col_btn.button(label, key=f"chat_{c_id}", use_container_width=True):
-                st.session_state.current_chat_id = c_id
-                st.rerun()
-                
-            if col_del.button("✕", key=f"del_{c_id}"):
-                delete_chat(c_id)
-                st.rerun()
+    # Получаем текущий чат
+    if st.session_state.current_chat_id is None:
+        create_new_chat()
+    chat_id = st.session_state.current_chat_id
+    messages = st.session_state.chat_histories[chat_id]["messages"]
 
-    # --- ОСНОВНАЯ ОБЛАСТЬ ЧАТА ---
-    # Получаем текущий чат по ID
-    current_id = st.session_state.current_chat_id
-    # Защита от удаления последнего чата (если ID вдруг нет)
-    if current_id not in st.session_state.chats:
-         current_id = list(st.session_state.chats.keys())[0]
-         st.session_state.current_chat_id = current_id
-         
-    current_chat = st.session_state.chats[current_id]
-
-    # Приветствие в пустом чате
-    if not current_chat["messages"]:
-        current_chat["messages"].append({"role": "assistant", "content": "Привет! Я готов анализировать данные. Задай вопрос."})
-
-    # --- 1. ОТРИСОВКА ИСТОРИИ (ВКЛЮЧАЯ ГРАФИКИ) ---
-    for msg in current_chat["messages"]:
+    # 2. ИСТОРИЯ СООБЩЕНИЙ (С ГРАФИКАМИ)
+    for msg in messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            
-            # ВАЖНО: Если в сообщении сохранен DataFrame, рисуем график
+            # ВАЖНО: Если есть сохраненный DataFrame, рисуем его
             if "dataframe" in msg and msg["dataframe"] is not None:
                 fig = auto_visualize_data(msg["dataframe"])
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    with st.expander("Показать таблицу данных"):
+                    with st.expander("Показать данные"):
                         st.dataframe(msg["dataframe"])
 
-    # --- 2. ОБРАБОТКА НОВОГО ВОПРОСА ---
+    # 3. ОБРАБОТКА НОВОГО ВОПРОСА
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
-        # 2.1 Обновляем заголовок чата (если чат новый)
-        if len(current_chat["messages"]) <= 2:
-            title_text = " ".join(prompt.split()[:4]) + "..."
-            st.session_state.chats[current_id]["title"] = title_text
-        
-        # 2.2 Добавляем вопрос пользователя в историю
-        st.session_state.chats[current_id]["messages"].append({"role": "user", "content": prompt})
+        # Обновляем имя чата
+        if len(messages) <= 2:
+            st.session_state.chat_histories[chat_id]["name"] = " ".join(prompt.split()[:4]) + "..."
+
+        # Добавляем вопрос пользователя
+        st.session_state.chat_histories[chat_id]["messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # 2.3 Генерируем ответ
+        # Генерируем ответ
         with st.chat_message("assistant"):
             try:
+                # Используем кэшированного агента (быстро!)
                 agent = get_agent(api_key)
                 
-                with st.spinner("🔍 Анализирую базу данных..."):
-                    response = agent.answer(prompt)
+                with st.spinner("🤖 Анализирую данные..."):
+                    answer = agent.answer(prompt)
                 
                 # Выводим текст
-                st.markdown(response)
+                st.markdown(answer)
                 
-                # Подготовка объекта сообщения для сохранения
-                message_data = {"role": "assistant", "content": response}
+                # Подготовка сообщения для сохранения
+                msg_data = {"role": "assistant", "content": answer}
 
-                # 2.4 Проверяем и сохраняем данные для графика
+                # ПРОВЕРЯЕМ ФАЙЛ CSV ДЛЯ ГРАФИКА
                 csv_path = "scripts_db/answer.csv"
                 if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
                     try:
                         df_result = pd.read_csv(csv_path)
+                        # Если данные ок — визуализируем и сохраняем
                         if not df_result.empty and len(df_result) < 300:
-                            # Рисуем график прямо сейчас
                             fig = auto_visualize_data(df_result)
                             if fig:
                                 st.plotly_chart(fig, use_container_width=True)
-                            
-                            # !!! СОХРАНЯЕМ DATAFRAME В ИСТОРИЮ !!!
-                            message_data["dataframe"] = df_result
-                            
-                    except Exception as e: 
-                        print(f"Ошибка визуализации: {e}")
-                
-                # Сохраняем сообщение (с графиком или без) в сессию
-                st.session_state.chats[current_id]["messages"].append(message_data)
-                
+                            # Сохраняем DF в историю, чтобы график остался навсегда
+                            msg_data["dataframe"] = df_result
+                    except Exception: pass
+
+                # Сохраняем ответ в историю
+                st.session_state.chat_histories[chat_id]["messages"].append(msg_data)
+
             except Exception as e:
                 st.error(f"Ошибка: {e}")
