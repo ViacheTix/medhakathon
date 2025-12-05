@@ -128,8 +128,23 @@ class OpenRouterSQLAgent:
             return None, "SQL Query Timed Out (более 30 сек)."
         except Exception as e:
             return None, str(e)
+    
+    def _format_history(self, history: list) -> str:
+        """Превращает список сообщений в строку диалога для контекста"""
+        if not history:
+            return "No previous context."
+        
+        formatted = []
+        # Берем последние 4 сообщения (2 пары вопрос-ответ), чтобы не перегружать
+        for msg in history[-4:]:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            content = str(msg["content"])[:200] # Обрезаем слишком длинные ответы
+            formatted.append(f"{role}: {content}")
+        return "\n".join(formatted)
 
-    def _generate_initial_sql(self, question: str) -> str:
+    def _generate_initial_sql(self, question: str, history_context: str) -> str:
+        """Этап 1: Генерация с учетом истории"""
+
         system_message = f"""
         Ты — эксперт SQL-аналитик на DuckDB.
         Твоя задача — генерировать SQL-запросы для медицинской базы данных.
@@ -140,7 +155,10 @@ class OpenRouterSQLAgent:
         === FEW-SHOT EXAMPLES ===
         {FEW_SHOT_EXAMPLES}
         
-        === RULES (CRITICAL) ===
+        === CONVERSATION HISTORY ===
+        {history_context}
+
+        === RULES ===
         1. Верни ТОЛЬКО SQL код внутри тегов ```sql ... ```.
         2. Приоритет №1: ВСЕГДА проверяй, можно ли ответить через таблицы 'ВИТРИНА' (insight_...). Они быстрее.
         3. Приоритет №2: Только если нет в витринах, используй prescriptions.
@@ -158,6 +176,8 @@ class OpenRouterSQLAgent:
         return self._clean_sql(response.content)
 
     def _fix_sql_error(self, question: str, bad_sql: str, error_msg: str) -> str:
+        """Этап 2: Самокоррекция (Self-Correction Loop)"""
+        
         system_message = f"""
         Ты — SQL-дебаггер. Твоя задача — исправить ошибку в запросе.
         === SCHEMA ===
@@ -179,6 +199,8 @@ class OpenRouterSQLAgent:
         return self._clean_sql(response.content)
     
     def _fix_empty_result(self, question: str, bad_sql: str) -> str:
+        """Этап 2: Self-Correction Loop (Empty Result)"""
+        
         system_message = f"""
         Ты — опытный SQL-аналитик / Data Detective.
         Твоя задача — найти данные, которые "потерялись" из-за слишком строгих фильтров.
@@ -201,6 +223,8 @@ class OpenRouterSQLAgent:
         return self._clean_sql(response.content)
 
     def _analyze_data(self, question: str, df: pd.DataFrame) -> str:
+        """Этап 3: Интерпретация результата"""
+
         if df is None: return "⚠️ Ошибка выполнения запроса."
         if df.empty: return "Данных не найдено даже после нескольких попыток."
 
@@ -224,9 +248,12 @@ class OpenRouterSQLAgent:
         response = chain.invoke({})
         return response.content
 
-    def answer(self, user_question: str):
+    def answer(self, user_question: str, chat_history: list = None):
         try:
-            current_sql = self._generate_initial_sql(user_question)
+            # 1. Формируем контекст истории
+            history_context = self._format_history(chat_history) if chat_history else "No history."
+
+            current_sql = self._generate_initial_sql(user_question, history_context)
             print(f"🔹 GENERATED SQL: {current_sql}")
 
             MAX_RETRIES = 3 
@@ -248,9 +275,9 @@ class OpenRouterSQLAgent:
                         current_sql = self._fix_empty_result(user_question, current_sql)
                         continue
                     else:
-                        return "📭 По вашему запросу данных не найдено."
+                        return "По вашему запросу данных не найдено."
 
                 print(f"✅ SUCCESS ({len(df)} rows)")
                 return self._analyze_data(user_question, df)
         except Exception as e:
-            return f"🔥 Критическая ошибка агента: {str(e)}"
+            return f"Критическая ошибка агента: {str(e)}"
