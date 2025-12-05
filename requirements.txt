@@ -1,14 +1,11 @@
 # Core AI & LangChain
 langchain>=0.3.0
 langchain-community>=0.3.0
-langchain-google-genai>=2.0.0
-langsmith>=0.1.120
 langchain-openai>=0.1.0
+langsmith>=0.1.120
 
 # Data Analysis
 pandas
-numpy
-openpyxl
 tabulate
 
 # UI & Visualization
@@ -16,13 +13,11 @@ streamlit
 plotly
 matplotlib
 seaborn>=0.12.2
-folium
-streamlit-folium
 streamlit-option-menu
 
 # Environment & Utils
 python-dotenv
-watchdog
+# watchdog
 
 # Database
 duckdb>=0.10.0
