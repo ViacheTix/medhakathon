@@ -14,7 +14,8 @@ input/
 *.xlsx
 *.json
 *.rtf
-scripts_db/request.sql
+request.sql
+tree.md
 
 # Python cache
 __pycache__/
