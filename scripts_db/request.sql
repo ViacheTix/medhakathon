@@ -1,11 +1,21 @@
-SELECT p.id_пациента, d.Торговое_название
-FROM prescriptions pr
-JOIN drugs d ON pr.код_препарата = d.код_препарата
-JOIN patients p ON pr.id_пациента = p.id_пациента
-WHERE (pr.id_пациента, DATE(pr.дата_рецепта)) IN (
-  SELECT id_пациента, DATE(дата_рецепта)
-  FROM prescriptions
-  GROUP BY id_пациента, DATE(дата_рецепта)
-  HAVING COUNT(DISTINCT код_препарата) >= 3
-)
+SELECT 
+    d.Торговое_название, 
+    COUNT(p.id_пациента) AS count
+FROM 
+    prescriptions p
+JOIN 
+    drugs d ON p.код_препарата = d.код_препарата
+JOIN 
+    diagnoses di ON p.код_диагноза = di.код_мкб
+JOIN 
+    patients pa ON p.id_пациента = pa.id_пациента
+WHERE 
+    pa.район_проживания = 'Центральный'
+    AND (di.название_диагноза ILIKE '%легкие%' 
+         OR di.название_диагноза ILIKE '%органы дыхания%' 
+         OR di.класс_заболевания ILIKE '%органы дыхания%')
+GROUP BY 
+    d.Торговое_название
+ORDER BY 
+    count DESC
 LIMIT 5;

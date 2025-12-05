@@ -1,11 +1,10 @@
 
 ```
 medhakathon
+├─ .streamlit
+│  └─ config.toml
 ├─ README.md
 ├─ agent.py
-├─ data
-│  └─ Описание данные.txt
-├─ data.py
 ├─ db
 │  └─ medinsight.duckdb
 ├─ main.py
