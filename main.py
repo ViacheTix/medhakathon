@@ -1,5 +1,5 @@
 import os
-import uuid  # <--- НУЖНО ДЛЯ ID ЧАТОВ
+import uuid
 from dotenv import load_dotenv
 import pandas as pd
 import streamlit as st
@@ -36,36 +36,36 @@ st.set_page_config(layout="wide", page_title="Medical Insight", page_icon="🏥"
 local_css()
 
 # ==========================================
-# 🚀 КЭШИРОВАНИЕ АГЕНТА (ВАЖНО!)
+# 🚀 КЭШИРОВАНИЕ АГЕНТА
 # ==========================================
 @st.cache_resource
 def get_agent(api_key_val):
-    """
-    Создаем агента ОДИН РАЗ. 
-    Это предотвращает повторное подключение к БД и сканирование схемы при каждом клике.
-    """
     return OpenRouterSQLAgent(api_key_val)
 
 # ==========================================
 # 📊 ФУНКЦИЯ АВТО-ВИЗУАЛИЗАЦИИ
 # ==========================================
 def auto_visualize_data(df: pd.DataFrame):
-    if df.empty or len(df.columns) < 2: return None
+    if df is None or df.empty or len(df.columns) < 2: return None
     num_cols = df.select_dtypes(include=['number']).columns.tolist()
     cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
     date_cols = [col for col in df.columns if any(x in col.lower() for x in ['date', 'time', 'year', 'month', 'day', 'дата', 'год', 'месяц'])]
     fig = None
     
-    if len(date_cols) > 0 and len(num_cols) > 0:
-        x_col = date_cols[0]; y_col = num_cols[0]
-        df = df.sort_values(by=x_col)
-        fig = px.line(df, x=x_col, y=y_col, markers=True, title=f"Динамика: {y_col}", template="plotly_white")
-    elif len(cat_cols) > 0 and len(num_cols) > 0:
-        x_col = cat_cols[0]; y_col = num_cols[0]
-        if len(df) <= 6 and any(x in y_col.lower() for x in ['share', 'доля', 'процент']): 
-            fig = px.pie(df, names=x_col, values=y_col, title=f"Распределение: {x_col}")
-        else:
-            fig = px.bar(df, x=x_col, y=y_col, title=f"{y_col} по {x_col}", color=y_col, template="plotly_white", color_continuous_scale="Blues")
+    try:
+        if len(date_cols) > 0 and len(num_cols) > 0:
+            x_col = date_cols[0]; y_col = num_cols[0]
+            df = df.sort_values(by=x_col)
+            fig = px.line(df, x=x_col, y=y_col, markers=True, title=f"Динамика: {y_col}", template="plotly_white")
+        elif len(cat_cols) > 0 and len(num_cols) > 0:
+            x_col = cat_cols[0]; y_col = num_cols[0]
+            if len(df) <= 6 and any(x in y_col.lower() for x in ['share', 'доля', 'процент']): 
+                fig = px.pie(df, names=x_col, values=y_col, title=f"Распределение: {x_col}")
+            else:
+                fig = px.bar(df, x=x_col, y=y_col, title=f"{y_col} по {x_col}", color=y_col, template="plotly_white", color_continuous_scale="Blues")
+    except Exception:
+        return None
+        
     return fig
 
 # ==========================================
@@ -85,7 +85,9 @@ def create_new_chat():
 def delete_chat(chat_id):
     if len(st.session_state.chats) > 1:
         del st.session_state.chats[chat_id]
-        st.session_state.current_chat_id = list(st.session_state.chats.keys())[0]
+        # Если удалили текущий, переключаемся на другой
+        if chat_id == st.session_state.current_chat_id:
+            st.session_state.current_chat_id = list(st.session_state.chats.keys())[0]
 
 # --- ЗАГРУЗКА ДАННЫХ ДЛЯ ДАШБОРДА ---
 @st.cache_data
@@ -141,7 +143,7 @@ if selected == "Дашборд":
     con.close()
 
 # ==========================================
-# 🤖 ВКЛАДКА 2: AI АГЕНТ
+# 🤖 ВКЛАДКА 2: AI АГЕНТ (ИСПРАВЛЕННАЯ)
 # ==========================================
 elif selected == "AI Агент":
     st.title("🤖 Чат с SQL-агентом")
@@ -153,6 +155,7 @@ elif selected == "AI Агент":
             st.warning("Требуется ключ API.")
             st.stop()
 
+    # --- САЙДБАР ЧАТОВ ---
     with st.sidebar:
         st.markdown("---")
         st.subheader("🗂 История диалогов")
@@ -161,60 +164,96 @@ elif selected == "AI Агент":
             st.rerun()
         
         chat_ids = list(st.session_state.chats.keys())
-        for c_id in chat_ids:
+        # Используем reversed, чтобы новые чаты были сверху
+        for c_id in reversed(chat_ids):
             chat = st.session_state.chats[c_id]
             col_btn, col_del = st.columns([5, 1])
             is_active = (c_id == st.session_state.current_chat_id)
-            label = f"{'📂' if is_active else '📁'} {chat['title']}"
+            
+            # Стиль кнопки (жирный шрифт если активна)
+            label = f"📂 **{chat['title']}**" if is_active else f"📁 {chat['title']}"
+            
             if col_btn.button(label, key=f"chat_{c_id}", use_container_width=True):
                 st.session_state.current_chat_id = c_id
                 st.rerun()
+                
             if col_del.button("✕", key=f"del_{c_id}"):
                 delete_chat(c_id)
                 st.rerun()
 
+    # --- ОСНОВНАЯ ОБЛАСТЬ ЧАТА ---
+    # Получаем текущий чат по ID
     current_id = st.session_state.current_chat_id
+    # Защита от удаления последнего чата (если ID вдруг нет)
+    if current_id not in st.session_state.chats:
+         current_id = list(st.session_state.chats.keys())[0]
+         st.session_state.current_chat_id = current_id
+         
     current_chat = st.session_state.chats[current_id]
 
+    # Приветствие в пустом чате
     if not current_chat["messages"]:
-        current_chat["messages"].append({"role": "assistant", "content": "Привет! Я готов анализировать данные."})
+        current_chat["messages"].append({"role": "assistant", "content": "Привет! Я готов анализировать данные. Задай вопрос."})
 
+    # --- 1. ОТРИСОВКА ИСТОРИИ (ВКЛЮЧАЯ ГРАФИКИ) ---
     for msg in current_chat["messages"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            
+            # ВАЖНО: Если в сообщении сохранен DataFrame, рисуем график
+            if "dataframe" in msg and msg["dataframe"] is not None:
+                fig = auto_visualize_data(msg["dataframe"])
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    with st.expander("Показать таблицу данных"):
+                        st.dataframe(msg["dataframe"])
 
+    # --- 2. ОБРАБОТКА НОВОГО ВОПРОСА ---
     if prompt := st.chat_input("Ваш вопрос к базе данных..."):
+        # 2.1 Обновляем заголовок чата (если чат новый)
         if len(current_chat["messages"]) <= 2:
-            current_chat["title"] = " ".join(prompt.split()[:3]) + "..."
+            title_text = " ".join(prompt.split()[:4]) + "..."
+            st.session_state.chats[current_id]["title"] = title_text
         
+        # 2.2 Добавляем вопрос пользователя в историю
         st.session_state.chats[current_id]["messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # 2.3 Генерируем ответ
         with st.chat_message("assistant"):
             try:
-                # ИСПОЛЬЗУЕМ КЭШИРОВАННОГО АГЕНТА!
                 agent = get_agent(api_key)
                 
                 with st.spinner("🔍 Анализирую базу данных..."):
                     response = agent.answer(prompt)
                 
+                # Выводим текст
                 st.markdown(response)
-                st.session_state.chats[current_id]["messages"].append({"role": "assistant", "content": response})
+                
+                # Подготовка объекта сообщения для сохранения
+                message_data = {"role": "assistant", "content": response}
 
+                # 2.4 Проверяем и сохраняем данные для графика
                 csv_path = "scripts_db/answer.csv"
                 if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
                     try:
                         df_result = pd.read_csv(csv_path)
                         if not df_result.empty and len(df_result) < 300:
+                            # Рисуем график прямо сейчас
                             fig = auto_visualize_data(df_result)
                             if fig:
-                                st.markdown("---")
-                                st.caption("📊 Автоматическая визуализация:")
                                 st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                with st.expander("Посмотреть таблицу данных"):
-                                    st.dataframe(df_result)
-                    except Exception as e: print(f"Ошибка визуализации: {e}")
+                            
+                            # !!! СОХРАНЯЕМ DATAFRAME В ИСТОРИЮ !!!
+                            message_data["dataframe"] = df_result
+                            
+                    except Exception as e: 
+                        print(f"Ошибка визуализации: {e}")
+                
+                # Сохраняем сообщение (с графиком или без) в сессию
+                st.session_state.chats[current_id]["messages"].append(message_data)
+                
             except Exception as e:
                 st.error(f"Ошибка: {e}")
