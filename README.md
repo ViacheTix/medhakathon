@@ -10,7 +10,22 @@ pip install -r requirements.txt
 
 ### 2. Настройка API-ключа
 Создайте файл .env в корневой папке и добавьте:
-OPENROUTER_API_KEY="ваш_ключ"
+```
+# 1. Включаем трассировку
+LANGCHAIN_TRACING_V2=true
+
+# 2. Указываем стандартный адрес
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+
+# 3. Твой ключ
+LANGCHAIN_API_KEY="…"
+
+# 4. Имя проекта
+LANGCHAIN_PROJECT="Medical_Insight_Hackathon"
+
+# 5. Ключ Openrouter
+OPENROUTER_API_KEY="sk-or-v1-…"
+```
 
 Альтернативно: введите ключ прямо в интерфейсе приложения при первом запуске.
 
