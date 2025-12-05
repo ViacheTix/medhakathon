@@ -6,10 +6,24 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import plotly.express as px
 import duckdb
+import uuid
 
 from agent import OpenRouterSQLAgent
 
 load_dotenv()
+def create_new_chat():
+    new_id = str(uuid.uuid4())[:8]
+    st.session_state.chat_histories[new_id] = {
+        "name": f"Чат {len(st.session_state.chat_histories) + 1}",
+        "messages": [
+            {"role": "assistant", "content": "Новый чат открыт. Чем могу помочь?"}
+        ]
+    }
+    st.session_state.current_chat_id = new_id
+
+def delete_chat(chat_id):
+    if chat_id in st.session_state.chat_histories:
+        del st.session_state.chat_histories[chat_id]
 
 # ==========================================
 # 🛠 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Кэш и Визуал)
@@ -192,35 +206,305 @@ if selected == "Дашборд":
 
     # Графики демографии
     c1, c2 = st.columns([1, 2])
-    with c1: st.plotly_chart(px.pie(df_gender, values="count", names="пол", title="Распределение по полу", color_discrete_map={"М": "#1f77b4", "Ж": "#f30f9b"}, hole=0.4), use_container_width=True)
-    with c2: st.plotly_chart(px.histogram(df_age, x="age", nbins=30, title="Возрастная структура", color_discrete_sequence=['#00CC96']), use_container_width=True)
+    
+    with c1:
+        fig_gender = px.pie(
+            df_gender,
+            values="count",
+            names="пол",
+            title="Распределение по полу",
+            color_discrete_map={"М": "#1f77b4", "Ж": "#f30f9b"},
+            hole=0.4
+        )
+        fig_gender.update_traces(textinfo='percent', textfont_size=18)
+        st.plotly_chart(fig_gender, use_container_width=True)
+        
+    with c2:
+        fig_age = px.histogram(
+            df_age, 
+            x="age", 
+            nbins=30,
+            title="Возрастная структура пациентов",
+            labels={'age': 'Возраст', 'count': 'Количество пациентов'},
+            color_discrete_sequence=['#00CC96']
+        )
+        fig_age.update_layout(bargap=0.1)
+        st.plotly_chart(fig_age, use_container_width=True)
 
-    st.plotly_chart(px.treemap(df_district_patients, path=['район_проживания'], values='count', title='География пациентов'), use_container_width=True)
-    st.plotly_chart(px.area(df_season, x="month_year", y="cases", title="Динамика обращений"), use_container_width=True)
+    st.divider()
+
+    # ----------------------------------------
+    # 🏠 ГЕОГРАФИЯ ПАЦИЕНТОВ
+    # ----------------------------------------
+    st.subheader("🏠 Где живут наши пациенты?")
+    fig_tree = px.treemap(
+        df_district_patients,
+        path=['район_проживания'],
+        values='count',
+        title='Распределение пациентов по районам',
+        color='count',
+        color_continuous_scale='cividis'
+    )
+
+    fig_tree.update_traces(
+        texttemplate='%{label}<br>%{value}',
+        textfont_size=18
+    )
+
+    fig_tree.update_layout(
+        margin=dict(t=50, l=25, r=25, b=25),
+        height=650,
+        title_font_size=22
+    )
 
     # Статистика заболеваний (Твой блок)
     st.subheader("📈 Статистика заболеваний")
     con = duckdb.connect(DB_PATH, read_only=True)
-    
-    # Топ-20
-    df_top_classes = con.execute("SELECT класс_заболевания, COUNT(*) AS cases FROM prescriptions p JOIN diagnoses d ON p.код_диагноза = d.код_мкб GROUP BY класс_заболевания ORDER BY cases DESC LIMIT 20").df()
-    st.plotly_chart(px.bar(df_top_classes, x="cases", y="класс_заболевания", orientation='h', title="Топ-20 классов заболеваний", color="cases"), use_container_width=True)
+
+    # --- 1. Топ-20 классов заболеваний ---
+    short_names = {
+        "Болезни системы кровообращения": "Сердечно-сосудистые",
+        "Болезни дыхательной системы": "Дыхательная система",
+        "Болезни эндокринной системы": "Эндокринная система",
+        "Болезни нервной системы": "Нервная система",
+        "Болезни мочеполовой системы": "Мочеполовая система",
+        "Болезни органов пищеварения": "Пищеварение"
+    }
+    df_top_classes = con.execute("""
+        SELECT 
+            класс_заболевания,
+            COUNT(*) AS cases
+        FROM prescriptions p
+        JOIN diagnoses d ON p.код_диагноза = d.код_мкб
+        GROUP BY класс_заболевания
+        ORDER BY cases DESC
+        LIMIT 20
+    """).df()
+    df_top_classes["класс_заболевания"] = df_top_classes["класс_заболевания"].replace(short_names)
+
+    fig_top_classes = px.bar(
+        df_top_classes,
+        x="cases",
+        y="класс_заболевания",
+        orientation='h',
+        title="Топ-20 классов заболеваний",
+        labels={"cases": "Число обращений", "класс_заболевания": "Класс заболеваний"},
+        color="cases",
+        color_continuous_scale="cividis"
+    )
+    st.plotly_chart(fig_top_classes, use_container_width=True)
+
     st.markdown("---")
-    
-    # Детализация класса
+
+    # --- 2. Частота заболеваний внутри выбранного класса ---
     st.markdown("### 🧬 Частота заболеваний внутри класса")
+
     classes_list = df_top_classes["класс_заболевания"].unique().tolist()
     selected_class = st.selectbox("Выберите класс заболевания:", classes_list)
+
+    # Получаем детальную статистику по всем заболеваниям в классе
+    df_group_detail = con.execute(f"""
+        SELECT 
+            d.название_диагноза,
+            COUNT(*) AS cnt
+        FROM prescriptions p
+        JOIN diagnoses d ON p.код_диагноза = d.код_мкб
+        WHERE d.класс_заболевания = '{selected_class}'
+        GROUP BY d.название_диагноза
+        ORDER BY cnt DESC
+    """).df()
+
+    # Рассчитываем долю каждого заболевания
+    total_cases = df_group_detail['cnt'].sum()
+    df_group_detail['доля'] = (df_group_detail['cnt'] / total_cases * 100).round(2)
+    df_group_detail['процент'] = df_group_detail['доля'].astype(str) + '%'
+
+    # Ограничиваем количество отображаемых заболеваний (топ-6 + остальные для компактности)
+    top_n = 6  # Уменьшили для компактной легенды
+    if len(df_group_detail) > top_n:
+        top_diseases = df_group_detail.head(top_n).copy()
+        other_cases = df_group_detail.iloc[top_n:]['cnt'].sum()
+        other_share = (other_cases / total_cases * 100).round(2)
+        
+        # Создаем строку для "Остальных"
+        other_row = pd.DataFrame({
+            'название_диагноза': [f'Остальные ({len(df_group_detail) - top_n} диагнозов)'],
+            'cnt': [other_cases],
+            'доля': [other_share],
+            'процент': [f'{other_share}%']
+        })
+        
+        df_plot = pd.concat([top_diseases, other_row], ignore_index=True)
+    else:
+        df_plot = df_group_detail.copy()
+
+    # Сортируем по убыванию для лучшей читаемости
+    df_plot = df_plot.sort_values('доля', ascending=True)
+
+    # Создаем stacked bar chart
+    fig_group_details = px.bar(
+        df_plot,
+        x='доля',
+        y=pd.Series([selected_class] * len(df_plot)),  # Все столбцы будут в одной строке
+        orientation='h',
+        color='название_диагноза',
+        title=f"Структура диагнозов в классе: {selected_class}",
+        labels={
+            'доля': 'Доля от всех случаев в классе (%)',
+            'y': '',
+            'название_диагноза': 'Конкретный диагноз'
+        },
+        text='процент',
+        color_discrete_sequence=px.colors.qualitative.Set3
+    )
+
+    # НАСТРОЙКА ЛЕГЕНДЫ - КАЖДЫЙ ЭЛЕМЕНТ В НОВОЙ СТРОКЕ
+    fig_group_details.update_layout(
+        showlegend=True,
+        legend_title=dict(
+            text="<b>Диагнозы:</b>",
+            font=dict(size=12)
+        ),
+        # ВЕРТИКАЛЬНАЯ ЛЕГЕНДА С ОДНИМ ЭЛЕМЕНТОМ В СТРОКЕ
+        legend=dict(
+            orientation="v",  # Вертикальная ориентация
+            yanchor="top",
+            y=-0.45,  # Размещаем ниже графика
+            xanchor="center",
+            x=0.5,    # Центрируем по горизонтали
+            font=dict(size=11),
+            itemwidth=30,
+            itemsizing="constant",
+            # НАСТРОЙКИ ДЛЯ ОДНОГО ЭЛЕМЕНТА В СТРОКУ
+            traceorder="normal",
+            itemclick="toggleothers",
+            itemdoubleclick="toggle",
+            # Группируем элементы в столбцы (если нужно)
+            groupclick="toggleitem",
+            # Отступы между элементами
+            borderwidth=1,
+            bordercolor="LightGray",
+            bgcolor="rgba(255, 255, 255, 0.9)",
+            # Фиксируем размеры для читаемости
+            entrywidth=200,  # Ширина каждой записи
+            entrywidthmode="pixels"
+        ),
+        # Увеличиваем отступ снизу для легенды
+        margin=dict(l=10, r=10, t=50, b=180),  # Увеличили bottom
+        height=500,
+        bargap=0.5,
+        yaxis=dict(
+            showticklabels=False,
+            title_text=""
+        ),
+        xaxis=dict(
+            range=[0, 100],
+            title_text="Доля случаев (%)",
+            ticksuffix="%"
+        ),
+        title=dict(
+            y=0.95,
+            x=0.5,
+            xanchor='center',
+            font=dict(size=16)
+        )
+    )
+
+    # Настраиваем подписи на столбцах
+    fig_group_details.update_traces(
+        textposition='inside',
+        insidetextanchor='middle',
+        textfont=dict(size=10, color='black', family="Arial"),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>" +
+            "Доля: %{customdata[1]:.1f}%<br>" +
+            "Количество: %{customdata[2]:,} случаев<br>" +
+            "<extra></extra>"
+        )
+    )
+
+    # Добавляем абсолютные числа в кастомные данные для тултипа
+    fig_group_details.data[0].customdata = list(zip(
+        df_plot['название_диагноза'],
+        df_plot['доля'],
+        df_plot['cnt']
+    ))
+
+    # Дополнительная информация под графиком
+    st.plotly_chart(fig_group_details, use_container_width=True)
     
-    df_group_detail = con.execute(f"SELECT d.название_диагноза, COUNT(*) AS cnt FROM prescriptions p JOIN diagnoses d ON p.код_диагноза = d.код_мкб WHERE d.класс_заболевания = '{selected_class}' GROUP BY d.название_диагноза ORDER BY cnt DESC LIMIT 10").df()
-    fig_group = px.bar(df_group_detail, x='cnt', y='название_диагноза', orientation='h', title=f"Топ диагнозов: {selected_class}", color='cnt')
-    st.plotly_chart(fig_group, use_container_width=True)
-    
+    # Информационная панель под графиком
+    with st.expander("📊 Детальная информация о классе заболеваний", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Всего диагнозов в классе", len(df_group_detail))
+        with col2:
+            st.metric("Всего случаев", f"{total_cases:,}")
+        with col3:
+            most_common = df_group_detail.iloc[0]
+            st.metric("Самый частый диагноз", 
+                     f"{most_common['название_диагноза'][:30]}...", 
+                     f"{most_common['доля']}%")
+
     st.markdown("---")
-    
-    # Финансы
-    st.subheader("💰 Топ-10 заболеваний по стоимости лечения")
-    st.plotly_chart(px.bar(df_finance, x="avg_cost_per_patient", y="disease_group", orientation="h", title="Средний чек на пациента", color="avg_cost_per_patient"), use_container_width=True)
+
+    # --- 3. Половые различия ---
+    st.subheader("🚻 Половые различия по группам заболеваний")
+
+    df_gender_diff = con.execute("""
+        SELECT 
+            disease_group AS группа_заболеваний,
+            male_patients AS мужчины,
+            female_patients AS женщины,
+            female_minus_male AS разница
+        FROM insight_gender_disease
+        ORDER BY разница DESC
+    """).df()
+    df_gender_diff["короткое_название"] = df_gender_diff["группа_заболеваний"].replace(short_names)
+    df_gender_diff = df_gender_diff.sort_values("разница", ascending=False)
+
+    fig_gender_diff = px.bar(
+        df_gender_diff,
+        x="разница",
+        y="группа_заболеваний",
+        orientation="h",
+        title="Разница количества пациентов (Ж − М)",
+        labels={"разница": "Разница (Ж − М)", "короткое_название": "Группа заболеваний"},
+        color="разница",
+        color_continuous_scale="cividis"
+    )
+
+    st.plotly_chart(fig_gender_diff, use_container_width=True)
+
+    st.markdown("---")
+
+    # --- 4. Топ-10 заболеваний по стоимости лечения ---
+    st.subheader("💰 Топ-10 заболеваний по стоимости лечения пациента")
+
+    df_cost_top10 = con.execute("""
+        SELECT 
+            disease_group AS группа,
+            avg_cost_per_patient AS стоимость
+        FROM insight_cost_by_disease
+        ORDER BY avg_cost_per_patient DESC
+        LIMIT 10
+    """).df()
+    df_cost_top10["короткое"] = df_cost_top10["группа"].replace(short_names)
+    df_cost_top10 = df_cost_top10.sort_values("стоимость", ascending=False)
+
+    fig_cost_top10 = px.bar(
+        df_cost_top10,
+        x="стоимость",
+        y="короткое",
+        orientation="h",
+        title="Топ-10 заболеваний по стоимости лечения пациента",
+        labels={"стоимость": "Стоимость на пациента", "короткое": "Группа заболеваний"},
+        color="стоимость",
+        color_continuous_scale="cividis"
+    )
+
+    st.plotly_chart(fig_cost_top10, use_container_width=True)
+
     con.close()
 
 
@@ -264,7 +548,6 @@ elif selected == "AI Агент":
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Генерируем ответ
         with st.chat_message("assistant"):
             try:
                 # Используем кэшированного агента (быстро!)
