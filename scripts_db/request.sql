@@ -1,9 +1,15 @@
-SELECT disease_group, 
-       female_minus_male, 
-       CASE 
-           WHEN female_minus_male > 0 THEN 'женщины'
-           WHEN female_minus_male < 0 THEN 'мужчины'
-           ELSE 'равно'
-       END AS кто_болеет_чаще
-FROM insight_gender_disease
-ORDER BY ABS(female_minus_male) DESC;
+SELECT 
+    strftime(дата_рецепта, '%Y') as year,
+    COUNT(*) as cnt
+FROM 
+    prescriptions
+JOIN 
+    diagnoses ON prescriptions.код_диагноза = diagnoses.код_мкб
+WHERE 
+    diagnoses.название_диагноза ILIKE '%карди%' 
+    OR diagnoses.название_диагноза ILIKE '%инфаркт%'
+    OR diagnoses.название_диагноза ILIKE '%сердце%'
+GROUP BY 
+    year
+ORDER BY 
+    year;
