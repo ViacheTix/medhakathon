@@ -1,21 +1,15 @@
 SELECT 
-    p.район_проживания, 
+    strftime(дата_рецепта, '%Y') as year,
     COUNT(*) as cnt
 FROM 
-    prescriptions pr
+    prescriptions
 JOIN 
-    diagnoses d ON pr.код_диагноза = d.код_мкб
-JOIN 
-    patients p ON pr.id_пациента = p.id_пациента
+    diagnoses ON prescriptions.код_диагноза = diagnoses.код_мкб
 WHERE 
-    d.название_диагноза ILIKE '%нос%' 
-    OR d.название_диагноза ILIKE '%ринит%' 
-    OR d.название_диагноза ILIKE '%синусит%' 
-    OR d.название_диагноза ILIKE '%рот%' 
-    OR d.название_диагноза ILIKE '%стоматит%' 
-    OR d.название_диагноза ILIKE '%гингивит%'
+    diagnoses.название_диагноза ILIKE '%карди%' 
+    OR diagnoses.название_диагноза ILIKE '%инфаркт%'
+    OR diagnoses.название_диагноза ILIKE '%сердце%'
 GROUP BY 
-    p.район_проживания
+    year
 ORDER BY 
-    cnt DESC
-LIMIT 1;
+    year;
