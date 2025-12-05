@@ -1,5 +1,5 @@
 # 🏥 Medical Insight — AI Аналитик
-🌐 Демо-версия: [https://medical-insight.streamlit.app/](https://medical-insight.streamlit.app/)
+🌐 Демо-версия: [https://medical-insight.streamlit.app/](https://medhakathon-m2ngerulzguk38ozyzs3pp.streamlit.app/)
 
 Суть проекта: AI-агент для анализа медицинских данных Санкт-Петербурга с возможностью генерации SQL-запросов и визуализации.
 
