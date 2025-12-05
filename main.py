@@ -213,7 +213,7 @@ if selected == "Дашборд":
             values="count",
             names="пол",
             title="Распределение по полу",
-            color_discrete_map={"М": "#1f77b4", "Ж": "#f30f9b"},
+            color_discrete_map={"М": "#636EFA", "Ж": "#EF553B"},
             hole=0.4
         )
         fig_gender.update_traces(textinfo='percent', textfont_size=18)
@@ -243,7 +243,7 @@ if selected == "Дашборд":
         values='count',
         title='Распределение пациентов по районам',
         color='count',
-        color_continuous_scale='cividis'
+        color_continuous_scale='Blues' 
     )
 
     fig_tree.update_traces(
@@ -254,7 +254,7 @@ if selected == "Дашборд":
     fig_tree.update_layout(
         margin=dict(t=50, l=25, r=25, b=25),
         height=650,
-        title_font_size=22
+        title_font_size=18
     )
 
     st.plotly_chart(fig_tree, use_container_width=True)
@@ -294,7 +294,7 @@ if selected == "Дашборд":
         title="Топ-20 классов заболеваний",
         labels={"cases": "Число обращений", "класс_заболевания": "Класс заболеваний"},
         color="cases",
-        color_continuous_scale="cividis"
+        color_continuous_scale="Tealgrn"
     )
     st.plotly_chart(fig_top_classes, use_container_width=True)
 
@@ -359,7 +359,7 @@ if selected == "Дашборд":
             'название_диагноза': 'Конкретный диагноз'
         },
         text='процент',
-        color_discrete_sequence=px.colors.qualitative.Set3
+        color_discrete_sequence=px.colors.qualitative.Prism
     )
 
     # НАСТРОЙКА ЛЕГЕНДЫ - КАЖДЫЙ ЭЛЕМЕНТ В НОВОЙ СТРОКЕ
@@ -475,7 +475,7 @@ if selected == "Дашборд":
         title="Разница количества пациентов (Ж − М)",
         labels={"разница": "Разница (Ж − М)", "короткое_название": "Группа заболеваний"},
         color="разница",
-        color_continuous_scale="cividis"
+        color_continuous_scale="Tealgrn"
     )
 
     st.plotly_chart(fig_gender_diff, use_container_width=True)
@@ -504,7 +504,7 @@ if selected == "Дашборд":
         title="Топ-10 заболеваний по стоимости лечения пациента",
         labels={"стоимость": "Стоимость на пациента", "короткое": "Группа заболеваний"},
         color="стоимость",
-        color_continuous_scale="cividis"
+        color_continuous_scale="Tealgrn"
     )
 
     st.plotly_chart(fig_cost_top10, use_container_width=True)
